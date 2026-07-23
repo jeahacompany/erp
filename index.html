@@ -367,7 +367,7 @@ async function loadAll() {
 // ---------- 공용 ----------
 function poSkuMap() {
   const m = {};
-  state.pos.filter(p=>p.status==='sent').forEach(p=>p.items.forEach(i=>{ if(!m[i.sku]) m[i.sku] = p.expectedDate || ''; }));
+  state.pos.filter(p=>p.status==='sent' && !p.trashed).forEach(p=>p.items.forEach(i=>{ if(!m[i.sku]) m[i.sku] = p.expectedDate || ''; }));
   return m;
 }
 const poBadge = (sku, m) => m[sku] !== undefined
@@ -936,10 +936,12 @@ async function recordAndCopyOrder(i, btn) {
 const PO_ST = { sent:['대기중','var(--orange-bg)','var(--orange)'], received:['입고완료','var(--green-bg)','var(--green)'], cancelled:['취소','var(--gray-bg)','var(--gray)'] };
 function renderPos() {
   const all = state.pos;
-  const pills = [['all','전체'],['sent','대기중'],['overdue','⚠ 지연'],['received','입고완료'],['cancelled','취소']];
+  const live = all.filter(p=>!p.trashed);
+  const pills = [['all','전체'],['sent','대기중'],['overdue','⚠ 지연'],['received','입고완료'],['cancelled','취소'],['trash','🗑 휴지통']];
   document.getElementById('pos-pills').innerHTML = pills.map(([k,label]) =>
-    `<div class="pill ${state.filter.pos===k?'active':''}" onclick="state.filter.pos='${k}';renderPos()">${label} ${k==='all'?all.length:(k==='overdue'?all.filter(p=>p.overdue).length:all.filter(p=>p.status===k).length)}</div>`).join('');
-  let rows = all.filter(p => state.filter.pos==='all' || (state.filter.pos==='overdue' ? p.overdue : p.status===state.filter.pos));
+    `<div class="pill ${state.filter.pos===k?'active':''}" onclick="state.filter.pos='${k}';renderPos()">${label} ${k==='all'?live.length:(k==='trash'?all.filter(p=>p.trashed).length:(k==='overdue'?live.filter(p=>p.overdue).length:live.filter(p=>p.status===k).length))}</div>`).join('');
+  let rows = state.filter.pos==='trash' ? all.filter(p=>p.trashed)
+    : live.filter(p => state.filter.pos==='all' || (state.filter.pos==='overdue' ? p.overdue : p.status===state.filter.pos));
   document.getElementById('t-pos').innerHTML =
     `<thead><tr><th>번호</th><th>발주일</th><th>매입처</th><th class="num">품목</th><th class="num">수량</th><th class="num">예상금액</th><th>입고예정</th><th>상태</th><th>발주자</th></tr></thead><tbody>` +
     (rows.length ? rows.map(p => { const st = PO_ST[p.status] || [p.status,'var(--gray-bg)','#555'];
@@ -962,10 +964,31 @@ function openPoDetail(id) {
     `</tbody></table></div></div>
     <div style="text-align:right;font-weight:700;margin:10px 0 16px;">합계 ${fmt(Math.round(p.totalCost))}원</div>
     <div class="m-actions">
-      ${isMgr() && p.status==='sent' ? `<button class="btn" onclick="setPoStatus(${p.id},'cancelled')">발주 취소</button>
+      ${isMgr() && p.trashed ? `<button class="btn" onclick="setPoTrashed(${p.id}, false)">↩ 복원</button>
+      <button class="btn" style="color:var(--red);border-color:var(--red);" onclick="deletePoForever(${p.id})">🗑 완전삭제</button>` : ''}
+      ${isMgr() && !p.trashed && p.status==='sent' ? `<button class="btn" onclick="setPoStatus(${p.id},'cancelled')">발주 취소</button>
       <button class="btn btn-primary" onclick="setPoStatus(${p.id},'received')">✓ 입고완료</button>` : ''}
-      ${isMgr() && p.status!=='sent' ? `<button class="btn" onclick="setPoStatus(${p.id},'sent')">대기중으로 되돌리기</button>` : ''}
+      ${isMgr() && !p.trashed && p.status!=='sent' ? `<button class="btn" onclick="setPoStatus(${p.id},'sent')">대기중으로 되돌리기</button>
+      <button class="btn" onclick="setPoTrashed(${p.id}, true)">🗑 휴지통</button>` : ''}
       <button class="btn" onclick="closeModal()">닫기</button></div>`);
+}
+async function setPoTrashed(id, trashed) {
+  try {
+    await api('setPoTrashed', [session.token, String(id), trashed]);
+    toast(trashed ? '휴지통으로 이동했습니다' : '복원됐습니다');
+    state.pos = await api('listPos', [session.token, '90']);
+    renderPos(); renderNav(); renderStatus(); renderReorder(); closeModal();
+  } catch(e) { toast(e.message); }
+}
+async function deletePoForever(id) {
+  const p = state.pos.find(x=>x.id===id);
+  if (!confirm(`발주 #${id} (${p?p.supplier:''})를 완전히 삭제합니다.\n삭제하면 되돌릴 수 없습니다. 계속할까요?`)) return;
+  try {
+    await api('deletePo', [session.token, String(id)]);
+    toast('완전삭제됐습니다');
+    state.pos = await api('listPos', [session.token, '90']);
+    renderPos(); renderNav(); closeModal();
+  } catch(e) { toast(e.message); }
 }
 async function setPoStatus(id, status) {
   try {
