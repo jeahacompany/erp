@@ -273,16 +273,7 @@
 
     <!-- 매출 -->
     <div id="panel-sales" class="panel">
-      <p class="note">발주 프로그램(통합)에서 내려받은 주문 엑셀을 올리면 판매처별로 분리·집계됩니다.
-      개인정보(이름·연락처·주소)는 <b>이 브라우저 안에서 집계 후 버려지고 서버로 전송되지 않습니다.</b>
-      같은 날짜·판매처를 다시 올리면 덮어쓰기라 중복 걱정 없습니다.</p>
-      <div class="drop" id="sales-drop" onclick="document.getElementById('sales-file-in').click()" style="padding:22px;">
-        <div style="font-size:24px;">📈</div>
-        <div style="font-size:14px;font-weight:600;margin-top:4px;">주문 엑셀을 끌어다 놓거나 클릭해서 선택 (집에서먹자_*.xlsx)</div>
-        <input type="file" id="sales-file-in" accept=".xlsx" style="display:none;" onchange="handleSalesFile(this.files[0])">
-      </div>
-      <div id="sales-upload-status"></div>
-      <div id="sales-unmatched-box"></div>
+      <div id="sales-unmatched-notice"></div>
       <div class="cards" id="sales-kpi"></div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;" id="sales-grids">
         <div><h3 style="margin:4px 0 10px;font-size:14.5px;">판매처별 (최근 30일)</h3>
@@ -299,6 +290,20 @@
       <p class="note">행 클릭 = 수정. 판매가·리드타임·직접 안전재고를 채울수록 계산이 정교해집니다. 표준코드는 카테고리를 바꾸면 다음 정비 때 재부여됩니다.</p>
       <div class="toolbar"><input class="search-box" placeholder="품목명 / 코드 검색" oninput="state.q.products=this.value; renderProducts();"></div>
       <div class="tbl-wrap"><div class="table-scroll"><table id="t-products"></table></div></div>
+    </div>
+
+    <!-- 매출 업로드 -->
+    <div id="panel-salesup" class="panel">
+      <p class="note">발주 프로그램(통합)에서 내려받은 주문 엑셀을 올리면 판매처별로 분리·집계됩니다.
+      개인정보(이름·연락처·주소)는 <b>이 브라우저 안에서 집계 후 버려지고 서버로 전송되지 않습니다.</b>
+      같은 날짜·판매처를 다시 올리면 덮어쓰기라 중복 걱정 없습니다. 여러 파일을 연달아 올려도 됩니다.</p>
+      <div class="drop" id="sales-drop" onclick="document.getElementById('sales-file-in').click()" style="padding:22px;">
+        <div style="font-size:24px;">🧾</div>
+        <div style="font-size:14px;font-weight:600;margin-top:4px;">주문 엑셀을 끌어다 놓거나 클릭해서 선택 (집에서먹자_*.xlsx)</div>
+        <input type="file" id="sales-file-in" accept=".xlsx" style="display:none;" onchange="handleSalesFile(this.files[0])">
+      </div>
+      <div id="sales-upload-status"></div>
+      <div id="sales-unmatched-box"></div>
     </div>
 
     <!-- 마감 업로드 -->
@@ -399,10 +404,12 @@ const NAV = [
   { id:'match',     ico:'🔗', title:'품목 매칭', cnt: () => state.products.filter(p=>p.active!==false && !p.supplierId && p.sku!=='WT001').length },
   { id:'pos',       ico:'🧾', title:'발주 이력', cnt: () => state.pos.filter(p=>p.overdue).length },
   { label:'매출' },
-  { id:'sales',     ico:'📈', title:'매출 분석', cnt: () => (state.sales?.unmatched||[]).length },
+  { id:'sales',     ico:'📈', title:'매출 분석' },
+  { label:'업로드', mgr:true },
+  { id:'closing',   ico:'📤', title:'마감 업로드', mgr:true },
+  { id:'salesup',   ico:'🧾', title:'매출 업로드', mgr:true, cnt: () => (state.sales?.unmatched||[]).length },
   { label:'관리', mgr:true },
   { id:'products',  ico:'🏷️', title:'품목 관리', mgr:true },
-  { id:'closing',   ico:'📤', title:'마감 업로드', mgr:true },
   { id:'users',     ico:'👥', title:'직원 계정', admin:true },
   { id:'logs',      ico:'📋', title:'작업 기록', admin:true },
 ];
@@ -422,7 +429,7 @@ function showTab(id) {
   const item = NAV.find(n=>n.id===id);
   document.getElementById('page-title').textContent = item ? item.title.replace(' (준비중)','') : '';
   renderNav();
-  if (id === 'sales' && !state.sales) loadSales();
+  if ((id === 'sales' || id === 'salesup') && !state.sales) loadSales();
   if (id === 'board') { if (!state.sales) { loadSales().then(renderBoard); } else { renderBoard(); } }
   if (id === 'logs') loadLogs();
 }
@@ -1397,6 +1404,9 @@ async function loadSales() {
 }
 function renderSales() {
   const s = state.sales; if (!s) return;
+  const notice = document.getElementById('sales-unmatched-notice');
+  if (notice) notice.innerHTML = s.unmatched.length
+    ? `<div class="alert">🔗 연결 안 된 판매 상품이 <b>${s.unmatched.length}개</b> 있습니다 — <a href="#" style="color:var(--brand);font-weight:600;" onclick="showTab('salesup');return false;">매출 업로드 탭에서 연결</a>하면 집계에 포함됩니다.</div>` : '';
   const totQty = s.byChannel.reduce((a,c)=>a+(c.qty||0),0);
   const totAmt = s.byChannel.reduce((a,c)=>a+(c.amount||0),0);
   document.getElementById('sales-kpi').innerHTML = [
