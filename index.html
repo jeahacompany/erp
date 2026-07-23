@@ -127,6 +127,7 @@
   @keyframes sp { to { transform:rotate(360deg); } }
 
   @media (max-width: 860px) {
+    .board-grid { grid-template-columns: 1fr !important; }
     .app { flex-direction:column; }
     .side { width:100%; height:auto; position:static; flex-direction:column; }
     .side nav { display:flex; overflow-x:auto; padding:4px 8px 10px; }
@@ -174,8 +175,40 @@
 
     <div class="alert" id="top-alert" style="display:none;"></div>
 
+    <!-- 한눈에 보기 (시각화 보드) -->
+    <div id="panel-board" class="panel active">
+      <div class="cards" id="board-kpi"></div>
+      <div class="tbl-wrap" style="padding:16px 18px;margin-bottom:14px;">
+        <div style="display:flex;align-items:center;margin-bottom:6px;">
+          <b style="font-size:14px;">📈 일별 매출 · 판매수량 추이</b>
+          <span class="note" style="margin:0 0 0 10px;">막대=매출(원) · 선=수량(개)</span>
+        </div>
+        <div style="height:260px;"><canvas id="ch-daily"></canvas></div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px;" class="board-grid">
+        <div class="tbl-wrap" style="padding:16px 18px;">
+          <b style="font-size:14px;">🛒 판매처별 매출 (30일)</b>
+          <div style="height:250px;margin-top:8px;"><canvas id="ch-channel"></canvas></div>
+        </div>
+        <div class="tbl-wrap" style="padding:16px 18px;">
+          <b style="font-size:14px;">🏆 품목 판매 TOP 10 (30일)</b>
+          <div style="height:250px;margin-top:8px;"><canvas id="ch-sku"></canvas></div>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;" class="board-grid">
+        <div class="tbl-wrap" style="padding:16px 18px;">
+          <b style="font-size:14px;">📦 재고 상태 분포</b>
+          <div style="height:250px;margin-top:8px;"><canvas id="ch-stock"></canvas></div>
+        </div>
+        <div class="tbl-wrap" style="padding:16px 18px;">
+          <b style="font-size:14px;">🥩 카테고리별 출고량 (30일)</b>
+          <div style="height:250px;margin-top:8px;"><canvas id="ch-cat"></canvas></div>
+        </div>
+      </div>
+    </div>
+
     <!-- 전체 현황 -->
-    <div id="panel-status" class="panel active">
+    <div id="panel-status" class="panel">
       <div class="cards" id="kpi-cards"></div>
       <div class="filters" id="status-pills"></div>
       <div class="toolbar"><input class="search-box" placeholder="품목명 / 코드 검색" oninput="state.q.status=this.value; renderStatus();"></div>
@@ -286,6 +319,7 @@
 <div class="toast" id="toast"></div>
 
 <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <script>
 const API_URL = 'https://zcjvriedzememkiltqfa.supabase.co/rest/v1/rpc/erp_api';
 const ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpjanZyaWVkemVtZW1raWx0cWZhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQwMjg2MTIsImV4cCI6MjA5OTYwNDYxMn0.2nZh82xFUNORqcKObAHUnz8K5EjjL-Nym0T4YkDHxMk';
@@ -293,7 +327,7 @@ const ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZ
 let session = JSON.parse(localStorage.getItem('erp_session') || 'null');
 const state = { rows: [], products: [], suppliers: [], users: [], pos: [], sales: null,
   filter: { status:'all', reorder:'all', pos:'all' }, q: { status:'', reorder:'', products:'', match:'' },
-  sort: {}, tab: 'status' };
+  sort: {}, tab: 'board' };
 
 async function api(fn, args) {
   const r = await fetch(API_URL, { method:'POST',
@@ -326,6 +360,8 @@ function logout() { if (session) api('logout',[session.token]).catch(()=>{}); lo
 
 // ---------- 네비게이션 ----------
 const NAV = [
+  { label:'대시보드' },
+  { id:'board',     ico:'📊', title:'한눈에 보기' },
   { label:'재고' },
   { id:'status',    ico:'📊', title:'전체 현황' },
   { id:'reorder',   ico:'🚨', title:'안전재고·발주', cnt: () => state.rows.filter(r=>['발주필요','품절'].includes(r.status)).length },
@@ -359,6 +395,85 @@ function showTab(id) {
   document.getElementById('page-title').textContent = item ? item.title.replace(' (준비중)','') : '';
   renderNav();
   if (id === 'sales' && !state.sales) loadSales();
+  if (id === 'board') { if (!state.sales) { loadSales().then(renderBoard); } else { renderBoard(); } }
+}
+
+// ---------- 한눈에 보기 (시각화 보드) ----------
+const charts = {};
+function mkChart(id, cfg) {
+  if (charts[id]) charts[id].destroy();
+  const el = document.getElementById(id); if (!el) return;
+  charts[id] = new Chart(el, cfg);
+}
+const C_BRAND='#F26522', C_SET=['#F26522','#20242E','#1971C2','#2F9E44','#E8590C','#997A00','#D6455D','#868E96','#7048E8','#0CA678'];
+function renderBoard() {
+  const rows = state.rows, s = state.sales;
+  const latestDay = s && s.byDay.length ? s.byDay[0] : null;
+  const totAmt30 = s ? s.byChannel.reduce((a,c)=>a+(c.amount||0),0) : 0;
+  const stockValue = rows.reduce((a,r)=>a+(r.stockValue||0),0);
+  const needCount = rows.filter(r=>['발주필요','품절'].includes(r.status)).length;
+  document.getElementById('board-kpi').innerHTML = [
+    { label:'최근일 매출 ('+(latestDay?latestDay.date.slice(5):'-')+')', value: latestDay?fmt(Math.round(latestDay.amount))+'원':'-', foot: latestDay?fmt(Math.round(latestDay.qty))+'개 판매':'매출 업로드 필요', cls:'' },
+    { label:'30일 누적 매출', value: fmt(Math.round(totAmt30))+'원', foot:'결제금액 기준', cls:'' },
+    { label:'현재 재고금액', value: fmt(stockValue)+'원', foot: rows.filter(r=>r.stock>0).length+'개 품목 보유', cls:'' },
+    { label:'발주 필요', value: needCount+'건', foot:'발주필요+품절', cls: needCount>0?'v-red':'v-green' },
+  ].map(k=>`<div class="card" style="cursor:default;"><div class="label">${k.label}</div><div class="value ${k.cls}" style="font-size:19px;">${k.value}</div><div class="foot">${k.foot}</div></div>`).join('');
+
+  // 일별 추이 (최근 14일, 과거→최신)
+  const days = s ? [...s.byDay].reverse().slice(-14) : [];
+  mkChart('ch-daily', { type:'bar',
+    data: { labels: days.map(d=>d.date.slice(5)),
+      datasets: [
+        { label:'매출(원)', data: days.map(d=>Math.round(d.amount)), backgroundColor:'#F2652233', borderColor:C_BRAND, borderWidth:1.5, borderRadius:6, yAxisID:'y' },
+        { label:'수량(개)', data: days.map(d=>Math.round(d.qty)), type:'line', borderColor:'#20242E', backgroundColor:'#20242E', tension:.3, pointRadius:3, yAxisID:'y1' } ] },
+    options: { responsive:true, maintainAspectRatio:false,
+      plugins:{ legend:{position:'top', labels:{boxWidth:12, font:{size:11}}} },
+      scales:{ y:{ position:'left', ticks:{ callback:v=>(v/10000)+'만', font:{size:11} } },
+               y1:{ position:'right', grid:{display:false}, ticks:{font:{size:11}} },
+               x:{ grid:{display:false}, ticks:{font:{size:11}} } } } });
+
+  // 판매처별 도넛 (상위 7 + 기타)
+  if (s) {
+    const chs = s.byChannel.filter(c=>c.amount>0);
+    const top = chs.slice(0,7);
+    const rest = chs.slice(7).reduce((a,c)=>a+c.amount,0);
+    const labels = top.map(c=>c.channel).concat(rest>0?['기타']:[]);
+    const data = top.map(c=>Math.round(c.amount)).concat(rest>0?[Math.round(rest)]:[]);
+    mkChart('ch-channel', { type:'doughnut',
+      data:{ labels, datasets:[{ data, backgroundColor:C_SET, borderWidth:2, borderColor:'#fff' }] },
+      options:{ responsive:true, maintainAspectRatio:false, cutout:'55%',
+        plugins:{ legend:{position:'right', labels:{boxWidth:10, font:{size:11}}},
+          tooltip:{ callbacks:{ label: ctx => ' '+ctx.label+': '+fmt(ctx.parsed)+'원' } } } } });
+
+    // 품목 TOP10 가로바
+    const skus = s.bySku.filter(r=>r.sku!=='WT001').slice(0,10);
+    mkChart('ch-sku', { type:'bar',
+      data:{ labels: skus.map(r=>r.name.length>14?r.name.slice(0,14)+'…':r.name),
+        datasets:[{ label:'판매수량', data: skus.map(r=>Math.round(r.qty)), backgroundColor:C_BRAND, borderRadius:5 }] },
+      options:{ indexAxis:'y', responsive:true, maintainAspectRatio:false,
+        plugins:{ legend:{display:false} },
+        scales:{ x:{ ticks:{font:{size:11}} }, y:{ grid:{display:false}, ticks:{font:{size:11}} } } } });
+  }
+
+  // 재고 상태 도넛
+  const stCount = {};
+  rows.forEach(r=>{ stCount[r.status]=(stCount[r.status]||0)+1; });
+  const stOrder = ['재고적정','발주임박','발주필요','품절','과다재고','부진재고','재고없음','데이터부족'].filter(k=>stCount[k]);
+  const stColor = { '재고적정':'#2F9E44','발주임박':'#E8590C','발주필요':'#D6455D','품절':'#C92A2A','과다재고':'#997A00','부진재고':'#F59F00','재고없음':'#868E96','데이터부족':'#CED4DA' };
+  mkChart('ch-stock', { type:'doughnut',
+    data:{ labels: stOrder, datasets:[{ data: stOrder.map(k=>stCount[k]), backgroundColor: stOrder.map(k=>stColor[k]), borderWidth:2, borderColor:'#fff' }] },
+    options:{ responsive:true, maintainAspectRatio:false, cutout:'55%',
+      plugins:{ legend:{position:'right', labels:{boxWidth:10, font:{size:11}}} } } });
+
+  // 카테고리별 30일 출고
+  const cats = {};
+  rows.forEach(r=>{ const c=r.category||'미분류'; cats[c]=(cats[c]||0)+(r.out30||0); });
+  const catE = Object.entries(cats).sort((a,b)=>b[1]-a[1]);
+  mkChart('ch-cat', { type:'bar',
+    data:{ labels: catE.map(e=>e[0]), datasets:[{ label:'30일 출고(개)', data: catE.map(e=>Math.round(e[1])), backgroundColor:C_SET.slice(0,catE.length), borderRadius:6 }] },
+    options:{ responsive:true, maintainAspectRatio:false,
+      plugins:{ legend:{display:false} },
+      scales:{ y:{ ticks:{font:{size:11}} }, x:{ grid:{display:false}, ticks:{font:{size:11}} } } } });
 }
 
 function enterApp() {
@@ -379,6 +494,7 @@ async function loadAll() {
     document.getElementById('hd-ref').textContent = dash.refDate || '-';
     document.getElementById('hd-closing').textContent = (dash.lastClosing && dash.lastClosing !== 'null') ? String(dash.lastClosing).replace(/"/g,'') : '아직 없음';
     renderNav(); renderKpi(); renderStatus(); renderReorder(); renderValuation(); renderOutbound(); renderGroups(); renderSuppliers(); renderMatch(); renderProducts(); renderPos();
+    if (state.tab === 'board') { if (!state.sales) { loadSales().then(renderBoard); } else { renderBoard(); } }
     if (session.role === 'admin') loadUsers();
   } catch(e) { toast('불러오기 실패: ' + e.message); }
 }
