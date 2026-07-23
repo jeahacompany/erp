@@ -232,7 +232,25 @@
 
     <!-- 매출 -->
     <div id="panel-sales" class="panel">
-      <div class="alert">매출 모듈은 다음 단계입니다. 판매채널(스마트스토어·쿠팡 등) 데이터 형태가 정해지면 매출 추이 · 품목별 수익 · 재고 연동 분석이 이 자리에 들어갑니다. DB는 준비돼 있습니다.</div>
+      <p class="note">발주 프로그램(통합)에서 내려받은 주문 엑셀을 올리면 판매처별로 분리·집계됩니다.
+      개인정보(이름·연락처·주소)는 <b>이 브라우저 안에서 집계 후 버려지고 서버로 전송되지 않습니다.</b>
+      같은 날짜·판매처를 다시 올리면 덮어쓰기라 중복 걱정 없습니다.</p>
+      <div class="drop" id="sales-drop" onclick="document.getElementById('sales-file-in').click()" style="padding:22px;">
+        <div style="font-size:24px;">📈</div>
+        <div style="font-size:14px;font-weight:600;margin-top:4px;">주문 엑셀을 끌어다 놓거나 클릭해서 선택 (집에서먹자_*.xlsx)</div>
+        <input type="file" id="sales-file-in" accept=".xlsx" style="display:none;" onchange="handleSalesFile(this.files[0])">
+      </div>
+      <div id="sales-upload-status"></div>
+      <div id="sales-unmatched-box"></div>
+      <div class="cards" id="sales-kpi"></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;" id="sales-grids">
+        <div><h3 style="margin:4px 0 10px;font-size:14.5px;">판매처별 (최근 30일)</h3>
+          <div class="tbl-wrap"><div class="table-scroll" style="max-height:380px;"><table id="t-sales-channel"></table></div></div></div>
+        <div><h3 style="margin:4px 0 10px;font-size:14.5px;">일별 추이</h3>
+          <div class="tbl-wrap"><div class="table-scroll" style="max-height:380px;"><table id="t-sales-day"></table></div></div></div>
+      </div>
+      <h3 style="margin:16px 0 10px;font-size:14.5px;">품목별 판매 (최근 30일)</h3>
+      <div class="tbl-wrap"><div class="table-scroll" style="max-height:420px;"><table id="t-sales-sku"></table></div></div>
     </div>
 
     <!-- 품목 관리 -->
@@ -273,7 +291,7 @@ const API_URL = 'https://zcjvriedzememkiltqfa.supabase.co/rest/v1/rpc/erp_api';
 const ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpjanZyaWVkemVtZW1raWx0cWZhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQwMjg2MTIsImV4cCI6MjA5OTYwNDYxMn0.2nZh82xFUNORqcKObAHUnz8K5EjjL-Nym0T4YkDHxMk';
 
 let session = JSON.parse(localStorage.getItem('erp_session') || 'null');
-const state = { rows: [], products: [], suppliers: [], users: [], pos: [],
+const state = { rows: [], products: [], suppliers: [], users: [], pos: [], sales: null,
   filter: { status:'all', reorder:'all', pos:'all' }, q: { status:'', reorder:'', products:'', match:'' },
   sort: {}, tab: 'status' };
 
@@ -318,7 +336,7 @@ const NAV = [
   { id:'supplier',  ico:'🤝', title:'매입처 관리' },
   { id:'pos',       ico:'🧾', title:'발주 이력', cnt: () => state.pos.filter(p=>p.overdue).length },
   { label:'매출' },
-  { id:'sales',     ico:'📈', title:'매출 (준비중)' },
+  { id:'sales',     ico:'📈', title:'매출 분석', cnt: () => (state.sales?.unmatched||[]).length },
   { label:'관리', mgr:true },
   { id:'products',  ico:'🏷️', title:'품목 관리', mgr:true },
   { id:'closing',   ico:'📤', title:'마감 업로드', mgr:true },
@@ -340,6 +358,7 @@ function showTab(id) {
   const item = NAV.find(n=>n.id===id);
   document.getElementById('page-title').textContent = item ? item.title.replace(' (준비중)','') : '';
   renderNav();
+  if (id === 'sales' && !state.sales) loadSales();
 }
 
 function enterApp() {
@@ -996,6 +1015,151 @@ async function setPoStatus(id, status) {
     toast(status==='received' ? '입고완료 처리됐습니다. 입고 단가가 바뀌었으면 품목 관리에서 "입고 단가 기록"도 해주세요.' : '변경됐습니다');
     const pos = await api('listPos', [session.token, '90']); state.pos = pos;
     renderPos(); renderNav(); renderStatus(); renderReorder(); closeModal();
+  } catch(e) { toast(e.message); }
+}
+
+// ---------- 매출 ----------
+['dragover','dragleave','drop'].forEach(ev => document.addEventListener(ev, e => {
+  if (e.target.closest && e.target.closest('#sales-drop')) { e.preventDefault();
+    if (ev==='drop') handleSalesFile(e.dataTransfer.files[0]); } }));
+
+function handleSalesFile(file) {
+  if (!file) return;
+  const st = document.getElementById('sales-upload-status');
+  st.innerHTML = '<p class="note">파일 읽는 중...</p>';
+  const reader = new FileReader();
+  reader.onload = async e => {
+    try {
+      const wb = XLSX.read(new Uint8Array(e.target.result), { type:'array' });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const raw = XLSX.utils.sheet_to_json(ws, { header:1, raw:true });
+      // 헤더 탐색
+      let hi = -1, c = {};
+      for (let i=0; i<Math.min(raw.length,10); i++) {
+        const r = (raw[i]||[]).map(x=>String(x??''));
+        const f = name => r.findIndex(x=>x===name);
+        const date = f('주문일'), pname = f('판매사상품명'), qty = f('주문수량'), ch = f('판매사');
+        if (date>=0 && pname>=0 && qty>=0 && ch>=0) { hi=i; c={date, pname, popt:f('판매사옵션명'), qty, amt:f('결제금액'), ch}; break; }
+      }
+      if (hi<0) throw new Error('주문일/판매사상품명/주문수량/판매사 컬럼을 찾지 못했습니다');
+      // 개인정보 없이 (날짜,채널,상품,옵션) 집계
+      const agg = {};
+      let orders = 0;
+      for (let i=hi+1; i<raw.length; i++) {
+        const r = raw[i]; if (!r) continue;
+        const chv = String(r[c.ch]??'').trim(); if (!chv) continue;
+        let d = r[c.date];
+        if (typeof d === 'number') { const dt = new Date(Math.round((d - 25569) * 86400 * 1000)); d = dt.toISOString().slice(0,10); }
+        else { d = String(d??'').slice(0,10); }
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) continue;
+        const key = [d, chv, String(r[c.pname]??'').trim(), c.popt>=0?String(r[c.popt]??'').trim():''].join('|');
+        if (!agg[key]) agg[key] = { date:d, channel:chv, pname:String(r[c.pname]??'').trim(), popt:c.popt>=0?String(r[c.popt]??'').trim():'', qty:0, amount:0 };
+        agg[key].qty += Number(r[c.qty]) || 0;
+        agg[key].amount += (c.amt>=0 ? (Number(r[c.amt]) || 0) : 0);
+        orders++;
+      }
+      const rows = Object.values(agg);
+      if (!rows.length) throw new Error('집계할 주문이 없습니다');
+      st.innerHTML = `<p class="note">주문 ${fmt(orders)}건 → ${rows.length}개 조합으로 집계, 서버 반영 중...</p>`;
+      const res = await api('uploadSales', [session.token, rows]);
+      st.innerHTML = `<div class="alert" style="background:var(--green-bg);border-color:#B2F2BB;color:var(--green);">
+        ✅ 반영 완료 — 주문 ${fmt(orders)}건 / 매칭 ${res.matched}개 조합 · 미매칭 ${res.unmatched}개 조합
+        ${res.unmatched>0?'— 아래에서 상품만 연결해주면 자동 반영됩니다':''}</div>`;
+      state.sales = null; loadSales();
+    } catch(err) { st.innerHTML = `<div class="alert">❌ ${esc(err.message)}</div>`; }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+async function loadSales() {
+  try {
+    state.sales = await api('getSalesDashboard', [session.token, '30']);
+    renderSales(); renderNav();
+  } catch(e) { toast(e.message); }
+}
+function renderSales() {
+  const s = state.sales; if (!s) return;
+  const totQty = s.byChannel.reduce((a,c)=>a+(c.qty||0),0);
+  const totAmt = s.byChannel.reduce((a,c)=>a+(c.amount||0),0);
+  document.getElementById('sales-kpi').innerHTML = [
+    { label:'최근 30일 매출(결제금액)', value: fmt(Math.round(totAmt))+'원', foot:'금액 0으로 오는 채널(그립 등)은 제외된 값' },
+    { label:'판매 수량', value: fmt(Math.round(totQty))+'개', foot:'구성품 배수 반영' },
+    { label:'판매처', value: s.byChannel.length+'곳', foot:'' },
+    { label:'미매칭 상품', value: s.unmatched.length+'개', foot: s.unmatched.length?'아래에서 연결 필요':'모두 연결됨' },
+  ].map(k=>`<div class="card" style="cursor:default;"><div class="label">${k.label}</div><div class="value" style="font-size:18px;">${k.value}</div><div class="foot">${k.foot}</div></div>`).join('');
+
+  document.getElementById('t-sales-channel').innerHTML =
+    `<thead><tr><th>판매처</th><th class="num">수량</th><th class="num">매출</th></tr></thead><tbody>` +
+    s.byChannel.map(c=>`<tr><td><b>${esc(c.channel)}</b></td><td class="num">${fmt(Math.round(c.qty))}</td>
+      <td class="num">${c.amount>0?fmt(Math.round(c.amount))+'원':'<span style="color:var(--sub);">금액없음</span>'}</td></tr>`).join('') + '</tbody>';
+
+  document.getElementById('t-sales-day').innerHTML =
+    `<thead><tr><th>날짜</th><th class="num">수량</th><th class="num">매출</th></tr></thead><tbody>` +
+    s.byDay.map(d=>`<tr><td>${d.date}</td><td class="num">${fmt(Math.round(d.qty))}</td><td class="num">${fmt(Math.round(d.amount))}원</td></tr>`).join('') + '</tbody>';
+
+  document.getElementById('t-sales-sku').innerHTML =
+    `<thead><tr><th>품목</th><th class="num">판매수량</th><th class="num">매출</th><th class="num">평균단가(원가)</th><th class="num">매출이익(추정)</th></tr></thead><tbody>` +
+    s.bySku.map(r=>{ const profit = r.amount>0 && r.cost ? r.amount - r.qty*r.cost : null;
+      return `<tr><td>${esc(r.name)}<div class="name-sub">${r.sku}</div></td>
+      <td class="num">${fmt(Math.round(r.qty))}</td><td class="num">${r.amount>0?fmt(Math.round(r.amount))+'원':'-'}</td>
+      <td class="num">${fmt(r.cost)}</td>
+      <td class="num" style="color:${profit==null?'var(--sub)':(profit>=0?'var(--green)':'var(--red)')};">${profit==null?'-':fmt(Math.round(profit))+'원'}</td></tr>`; }).join('') + '</tbody>';
+
+  const box = document.getElementById('sales-unmatched-box');
+  if (!s.unmatched.length) { box.innerHTML = ''; return; }
+  if (!isMgr()) { box.innerHTML = `<div class="alert">미매칭 상품 ${s.unmatched.length}개 — 매니저/관리자가 연결해야 합니다.</div>`; return; }
+  box.innerHTML = `<div class="alert">🔗 <b>상품 연결 필요 ${s.unmatched.length}개</b> — 판매 상품이 우리 어떤 품목인지 한 번만 연결하면 다음부터 자동입니다. 세트상품(예: 곱창+소스)은 [+구성품]으로 여러 개 지정, "2팩"이면 수량배수 2.</div>` +
+    `<datalist id="sku-list">${state.products.map(p=>`<option value="${p.sku}">${esc(p.name)}</option>`).join('')}</datalist>` +
+    s.unmatched.map((u,i)=>`
+    <div class="tbl-wrap" style="margin-bottom:10px;padding:13px 16px;">
+      <div style="font-size:13px;margin-bottom:3px;"><b>${esc(u.pname)}</b></div>
+      <div style="font-size:12px;color:var(--sub);margin-bottom:9px;">${esc(u.popt)||'(옵션 없음)'} · ${fmt(Math.round(u.qty))}개 판매 · ${esc(u.channels)}</div>
+      <div id="um-items-${i}">
+        <div style="display:flex;gap:7px;margin-bottom:6px;align-items:center;">
+          <input list="sku-list" class="search-box" style="width:150px;margin:0;" placeholder="SKU 입력/검색" id="um-sku-${i}-0" oninput="showSkuName(this)">
+          <span style="font-size:12px;color:var(--sub);">× 수량배수</span>
+          <input type="number" value="1" min="0.1" step="0.1" style="width:70px;border:1px solid var(--line);border-radius:7px;padding:7px;text-align:right;" id="um-qty-${i}-0">
+          <span class="name-sub" id="um-nm-${i}-0" style="flex:1;"></span>
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;">
+        <button class="btn btn-sm" onclick="addUmItem(${i})">+ 구성품</button>
+        <div style="flex:1;"></div>
+        <button class="btn btn-sm btn-primary" onclick="saveMapping(${i})">연결 저장</button>
+      </div>
+    </div>`).join('');
+}
+function showSkuName(inp) {
+  const p = state.products.find(x=>x.sku===inp.value.trim());
+  const nm = document.getElementById(inp.id.replace('um-sku','um-nm'));
+  if (nm) nm.textContent = p ? '→ ' + p.name : '';
+}
+function addUmItem(i) {
+  const box = document.getElementById('um-items-'+i);
+  const j = box.children.length;
+  const div = document.createElement('div');
+  div.style.cssText = 'display:flex;gap:7px;margin-bottom:6px;align-items:center;';
+  div.innerHTML = `<input list="sku-list" class="search-box" style="width:150px;margin:0;" placeholder="SKU 입력/검색" id="um-sku-${i}-${j}" oninput="showSkuName(this)">
+    <span style="font-size:12px;color:var(--sub);">× 수량배수</span>
+    <input type="number" value="1" min="0.1" step="0.1" style="width:70px;border:1px solid var(--line);border-radius:7px;padding:7px;text-align:right;" id="um-qty-${i}-${j}">
+    <span class="name-sub" id="um-nm-${i}-${j}" style="flex:1;"></span>`;
+  box.appendChild(div);
+}
+async function saveMapping(i) {
+  const u = state.sales.unmatched[i]; if (!u) return;
+  const items = [];
+  let j = 0;
+  while (document.getElementById(`um-sku-${i}-${j}`)) {
+    const sku = document.getElementById(`um-sku-${i}-${j}`).value.trim();
+    const q = Number(document.getElementById(`um-qty-${i}-${j}`).value) || 1;
+    if (sku) items.push({ sku, qtyPer: q });
+    j++;
+  }
+  if (!items.length) { toast('SKU를 입력하세요'); return; }
+  try {
+    const r = await api('saveChannelMapping', [session.token, u.pname, u.popt, items]);
+    toast(`연결 저장 — 보관돼 있던 ${r.reprocessed}건도 자동 반영됨`);
+    state.sales = null; loadSales();
   } catch(e) { toast(e.message); }
 }
 
