@@ -317,6 +317,19 @@
       <div class="toolbar"><button class="btn btn-primary" onclick="openUserModal()">+ 직원 추가</button></div>
       <div class="tbl-wrap"><div class="table-scroll"><table id="t-users"></table></div></div>
     </div>
+
+    <!-- 작업 기록 (admin) -->
+    <div id="panel-logs" class="panel">
+      <p class="note">누가 언제 무엇을 했는지 자동으로 기록됩니다 (최근 14일). 매일 13:10에 전체 데이터가 이 PC의 <b>회사통합\backups</b> 폴더로 자동 백업됩니다 (최근 20일치 보관).</p>
+      <div style="display:grid;grid-template-columns:1.4fr 1fr;gap:14px;" class="board-grid">
+        <div><h3 style="margin:4px 0 10px;font-size:14.5px;">📝 작업 이력</h3>
+          <div class="tbl-wrap"><div class="table-scroll" style="max-height:520px;"><table id="t-audit"></table></div></div></div>
+        <div><h3 style="margin:4px 0 10px;font-size:14.5px;">🔐 로그인 기록</h3>
+          <div class="tbl-wrap"><div class="table-scroll" style="max-height:520px;"><table id="t-logins"></table></div></div></div>
+      </div>
+      <h3 style="margin:16px 0 10px;font-size:14.5px;">💰 단가 변경 이력</h3>
+      <div class="tbl-wrap"><div class="table-scroll" style="max-height:300px;"><table id="t-pricelog"></table></div></div>
+    </div>
   </div>
 </div>
 </div>
@@ -391,6 +404,7 @@ const NAV = [
   { id:'products',  ico:'🏷️', title:'품목 관리', mgr:true },
   { id:'closing',   ico:'📤', title:'마감 업로드', mgr:true },
   { id:'users',     ico:'👥', title:'직원 계정', admin:true },
+  { id:'logs',      ico:'📋', title:'작업 기록', admin:true },
 ];
 function renderNav() {
   document.getElementById('nav').innerHTML = NAV.filter(n =>
@@ -410,6 +424,58 @@ function showTab(id) {
   renderNav();
   if (id === 'sales' && !state.sales) loadSales();
   if (id === 'board') { if (!state.sales) { loadSales().then(renderBoard); } else { renderBoard(); } }
+  if (id === 'logs') loadLogs();
+}
+
+// ---------- 작업 기록 (admin) ----------
+const ACT_LABEL = {
+  save_product:'품목 수정', create_supplier:'매입처 추가', save_supplier:'매입처 수정',
+  match_supplier:'품목-매입처 매칭', map_channel_product:'판매상품 연결',
+  create_po:'발주 기록', set_po_status:'발주 상태변경', po_trash:'발주 휴지통', po_delete:'발주 완전삭제',
+  upload_sales:'매출 업로드', upsert_closing:'재고 마감반영',
+  create_user:'직원 추가', update_user:'직원 수정', save_setting:'설정 변경' };
+function actDetail(a) {
+  const d = a.detail || {};
+  switch (a.action) {
+    case 'save_product': return `${d.name||d.sku||''}`;
+    case 'create_supplier': case 'save_supplier': return d.name||'';
+    case 'match_supplier': return `${d.sku} → ${d.supplier}`;
+    case 'map_channel_product': return `${d.pname||''} → ${d.mainSku||''}`;
+    case 'create_po': return `#${d.poId} ${d.supplier||''}`;
+    case 'set_po_status': return `#${d.poId} → ${({sent:'대기중',received:'입고완료',cancelled:'취소'})[d.status]||d.status}`;
+    case 'po_trash': return `#${d.poId} ${d.trashed?'휴지통으로':'복원'}`;
+    case 'po_delete': return `#${d.poId}`;
+    case 'upload_sales': return `매칭 ${d.matched} · 미매칭 ${d.unmatched}`;
+    case 'upsert_closing': return `${d.date} · ${d.ok}건 (${d.source||''})`;
+    case 'create_user': return `${d.target} (${d.role||''})`;
+    case 'update_user': return `${d.target}${d.pwReset?' · 비번 초기화':''}`;
+    case 'save_setting': return d.key||'';
+    default: return JSON.stringify(d).slice(0,60);
+  }
+}
+async function loadLogs() {
+  try {
+    const r = await api('adminGetLogs', [session.token, '14']);
+    document.getElementById('t-audit').innerHTML =
+      `<thead><tr><th>일시</th><th>직원</th><th>작업</th><th>내용</th></tr></thead><tbody>` +
+      (r.audit.length ? r.audit.map(a=>`<tr><td style="white-space:nowrap;">${a.at}</td><td><b>${esc(a.username||'')}</b></td>
+        <td><span class="badge" style="background:var(--gray-bg);color:#495057;">${ACT_LABEL[a.action]||a.action}</span></td>
+        <td style="font-size:12px;color:#555;">${esc(actDetail(a))}</td></tr>`).join('')
+      : '<tr><td colspan="4" style="text-align:center;color:var(--sub);padding:22px;">기록 없음</td></tr>') + '</tbody>';
+    document.getElementById('t-logins').innerHTML =
+      `<thead><tr><th>일시</th><th>아이디</th><th>결과</th><th>IP</th></tr></thead><tbody>` +
+      (r.logins.length ? r.logins.map(l=>`<tr><td style="white-space:nowrap;">${l.at}</td><td>${esc(l.username||'')}</td>
+        <td>${l.ok?'<span class="badge" style="background:var(--green-bg);color:var(--green);">성공</span>':'<span class="badge" style="background:var(--red-bg);color:var(--red);">실패</span>'}</td>
+        <td style="font-size:11.5px;color:var(--sub);">${esc(l.ip||'')}</td></tr>`).join('')
+      : '<tr><td colspan="4" style="text-align:center;color:var(--sub);padding:22px;">기록 없음</td></tr>') + '</tbody>';
+    document.getElementById('t-pricelog').innerHTML =
+      `<thead><tr><th>일시</th><th>직원</th><th>품목</th><th class="num">이전</th><th class="num">변경</th><th>방식</th></tr></thead><tbody>` +
+      (r.prices.length ? r.prices.map(p=>`<tr><td style="white-space:nowrap;">${p.at}</td><td>${esc(p.username||'')}</td>
+        <td>${esc((state.products.find(x=>x.sku===p.sku)||{}).name||p.sku)}</td>
+        <td class="num">${fmt(p.oldCost)}</td><td class="num"><b>${fmt(p.newCost)}</b></td>
+        <td>${p.method==='avg_inbound'?'입고 평균':'직접 수정'}</td></tr>`).join('')
+      : '<tr><td colspan="6" style="text-align:center;color:var(--sub);padding:22px;">기록 없음</td></tr>') + '</tbody>';
+  } catch(e) { toast(e.message); }
 }
 
 // ---------- 한눈에 보기 (시각화 보드) ----------
