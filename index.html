@@ -365,6 +365,13 @@ async function loadAll() {
 }
 
 // ---------- 공용 ----------
+function poSkuMap() {
+  const m = {};
+  state.pos.filter(p=>p.status==='sent').forEach(p=>p.items.forEach(i=>{ if(!m[i.sku]) m[i.sku] = p.expectedDate || ''; }));
+  return m;
+}
+const poBadge = (sku, m) => m[sku] !== undefined
+  ? ` <span class="badge" style="background:#E7F0FA;color:var(--blue);" title="발주 진행중">🚚 ${m[sku] ? String(m[sku]).slice(5) : '발주중'}</span>` : '';
 const badge = st => {
   const map = { '발주필요':['var(--red-bg)','var(--red)'], '발주임박':['var(--orange-bg)','var(--orange)'],
     '품절':['var(--red-bg)','var(--red)'], '부진재고':['var(--orange-bg)','var(--orange)'],
@@ -416,13 +423,16 @@ function renderStatus() {
   const q = state.q.status.toLowerCase();
   if (q) rows = rows.filter(r => (r.name+r.sku+(r.stdCode||'')).toLowerCase().includes(q));
   rows = applySort(rows, 'status', 'stockValue', -1);
+  const pom = poSkuMap();
   document.getElementById('t-status').innerHTML =
-    `<thead><tr>${th2('코드','stdCode','status')}${th2('품목','name','status')}${th2('재고','stock','status',1)}${th2('개당단가','cost','status',1)}${th2('재고금액','stockValue','status',1)}<th>상태</th>${th2('7일평균','avg7','status',1)}${th2('30일평균','avg30','status',1)}${th2('소진예상','daysLeft','status',1)}<th>최근출고</th></tr></thead><tbody>` +
+    `<thead><tr>${th2('코드','stdCode','status')}${th2('품목','name','status')}${th2('재고','stock','status',1)}${th2('개당단가','cost','status',1)}${th2('재고금액','stockValue','status',1)}<th>상태</th>${th2('7일평균','avg7','status',1)}${th2('30일평균','avg30','status',1)}${th2('소진예상','daysLeft','status',1)}${th2('권장발주','recommendedOrder','status',1)}<th>최근출고</th></tr></thead><tbody>` +
     rows.map(r => `<tr onclick="openDetail('${r.sku}')" style="cursor:pointer;">
       <td>${codeCell(r)}</td><td>${nameCell(r)}</td>
       <td class="num">${fmt(r.stock)}</td><td class="num">${fmt(r.cost)}원</td><td class="num">${fmt(r.stockValue)}원</td>
-      <td>${badge(r.status)}</td><td class="num">${fmt(r.avg7)}</td><td class="num">${fmt(r.avg30)}</td>
-      <td class="num">${r.daysLeft==null?'-':fmt(r.daysLeft)+'일'}</td><td>${r.lastOutDate||'-'}</td></tr>`).join('') + '</tbody>';
+      <td>${badge(r.status)}${poBadge(r.sku, pom)}</td><td class="num">${fmt(r.avg7)}</td><td class="num">${fmt(r.avg30)}</td>
+      <td class="num">${r.daysLeft==null?'-':fmt(r.daysLeft)+'일'}</td>
+      <td class="num">${r.recommendedOrder>0 ? (pom[r.sku]!==undefined ? `<span style="color:var(--sub);">${fmt(r.recommendedOrder)}</span>` : `<b style="color:var(--red);">${fmt(r.recommendedOrder)}</b> ${isMgr()?`<button class="btn btn-sm btn-primary" style="margin-left:4px;" onclick="event.stopPropagation();quickOrder('${r.sku}')">발주</button>`:''}`) : '-'}</td>
+      <td>${r.lastOutDate||'-'}</td></tr>`).join('') + '</tbody>';
 }
 
 // ---------- 발주 ----------
@@ -435,6 +445,7 @@ function renderReorder() {
   const q = state.q.reorder.toLowerCase();
   if (q) rows = rows.filter(r => (r.name+r.sku+(r.stdCode||'')).toLowerCase().includes(q));
   rows = applySort(rows, 'reorder', 'recommendedOrder', -1);
+  const pom = poSkuMap();
   document.getElementById('t-reorder').innerHTML =
     `<thead><tr>${th2('코드','stdCode','reorder')}${th2('품목','name','reorder')}${th2('매입처','supplierName','reorder')}${th2('현재고','stock','reorder',1)}${th2('7일평균','avg7','reorder',1)}${th2('30일평균','avg30','reorder',1)}<th class="num">리드타임</th>${th2('안전재고','safety','reorder',1)}${th2('권장발주','recommendedOrder','reorder',1)}${th2('소진예상','daysLeft','reorder',1)}<th>상태</th></tr></thead><tbody>` +
     rows.map(r => `<tr onclick="openDetail('${r.sku}')" style="cursor:pointer;">
@@ -444,7 +455,7 @@ function renderReorder() {
       <td class="num">${r.leadTimeDays}일${r.leadIsDefault?'<span style="color:var(--sub);font-size:10.5px;">(기본)</span>':''}</td>
       <td class="num"><b>${fmt(r.safety)}</b>${r.safetyOverride!=null?' <span style="color:var(--blue);font-size:10.5px;">직접</span>':''}</td>
       <td class="num" style="color:${r.recommendedOrder>0?'var(--red)':'var(--sub)'};font-weight:650;">${fmt(r.recommendedOrder)}</td>
-      <td class="num">${r.daysLeft==null?'-':fmt(r.daysLeft)+'일'}</td><td>${badge(r.status)}</td></tr>`).join('') + '</tbody>';
+      <td class="num">${r.daysLeft==null?'-':fmt(r.daysLeft)+'일'}</td><td>${badge(r.status)}${poBadge(r.sku, pom)}</td></tr>`).join('') + '</tbody>';
 }
 
 // ---------- 재고원가 ----------
@@ -841,8 +852,13 @@ async function submitInboundCost(sku) {
 }
 
 // ---------- 발주서 생성 ----------
-function openOrderSheet() {
-  const need = state.rows.filter(r=>['발주필요','품절','발주임박'].includes(r.status) && r.recommendedOrder > 0);
+function quickOrder(sku) {
+  const r = state.rows.find(x=>x.sku===sku); if (!r) return;
+  openOrderSheet(r.supplierName || '매입처 미지정');
+}
+function openOrderSheet(supFilter) {
+  let need = state.rows.filter(r=>['발주필요','품절','발주임박'].includes(r.status) && r.recommendedOrder > 0);
+  if (supFilter) need = need.filter(r => (r.supplierName || '매입처 미지정') === supFilter);
   if (!need.length) { toast('발주가 필요한 품목이 없습니다'); return; }
   const bySup = {};
   need.forEach(r => { const k = r.supplierName || '매입처 미지정'; (bySup[k] = bySup[k] || []).push(r); });
