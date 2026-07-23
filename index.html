@@ -241,12 +241,19 @@
 
     <!-- 매입처 -->
     <div id="panel-supplier" class="panel">
+      <p class="note">행을 누르면 수정. <b>리드타임 · 발주방법 · 결제조건</b> 세 가지가 채워지면 "작성완료"로 바뀝니다. 미완료부터 위에서부터 하나씩 채워주세요 — 리드타임이 채워질수록 발주 계산이 정확해집니다.</p>
+      <div class="filters" id="sup-pills"></div>
       <div class="toolbar">
+        <input class="search-box" placeholder="매입처 검색" oninput="state.q.supplier=this.value; renderSuppliers();">
         <button class="btn btn-primary" id="sup-add-btn" onclick="openSupplierEdit(null)">+ 매입처 추가</button>
-        <span class="note" style="margin:0;">카드를 누르면 수정 · 아래 표에서 품목별 매입처를 지정하세요. 리드타임을 채우면 발주 계산이 정확해집니다.</span>
       </div>
-      <div class="sup-grid" id="sup-grid"></div>
-      <h3 style="margin:6px 0 10px; font-size:15px;">품목 ↔ 매입처 매칭</h3>
+      <div class="tbl-wrap"><div class="table-scroll"><table id="t-supplier-list"></table></div></div>
+    </div>
+
+    <!-- 품목 매칭 -->
+    <div id="panel-match" class="panel">
+      <p class="note">품목마다 어느 매입처에서 사오는지 지정합니다. 한 번 지정하면 발주서가 매입처별로 자동으로 묶입니다.</p>
+      <div class="filters" id="match-pills"></div>
       <div class="toolbar"><input class="search-box" placeholder="품목명 / 코드 검색" oninput="state.q.match=this.value; renderMatch();"></div>
       <div class="tbl-wrap"><div class="table-scroll"><table id="t-match"></table></div></div>
     </div>
@@ -327,7 +334,7 @@ const ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZ
 
 let session = JSON.parse(localStorage.getItem('erp_session') || 'null');
 const state = { rows: [], products: [], suppliers: [], users: [], pos: [], sales: null,
-  filter: { status:'all', reorder:'all', pos:'all' }, q: { status:'', reorder:'', products:'', match:'' },
+  filter: { status:'all', reorder:'all', pos:'all', supplier:'all', match:'all' }, q: { status:'', reorder:'', products:'', match:'', supplier:'' },
   sort: {}, tab: 'board' };
 
 async function api(fn, args) {
@@ -375,7 +382,8 @@ const NAV = [
   { id:'outbound',  ico:'📦', title:'출고 분석' },
   { id:'groups',    ico:'🧬', title:'동일품목 비교' },
   { label:'파트너' },
-  { id:'supplier',  ico:'🤝', title:'매입처 관리' },
+  { id:'supplier',  ico:'🤝', title:'매입처 관리', cnt: () => state.suppliers.filter(s=>s.active!==false && !supComplete(s)).length },
+  { id:'match',     ico:'🔗', title:'품목 매칭', cnt: () => state.products.filter(p=>p.active!==false && !p.supplierId && p.sku!=='WT001').length },
   { id:'pos',       ico:'🧾', title:'발주 이력', cnt: () => state.pos.filter(p=>p.overdue).length },
   { label:'매출' },
   { id:'sales',     ico:'📈', title:'매출 분석', cnt: () => (state.sales?.unmatched||[]).length },
@@ -740,26 +748,63 @@ function renderGroups() {
 }
 
 // ---------- 매입처 ----------
+function supComplete(s) { return !!(s.leadTimeDays && (s.orderMethod||'').trim() && (s.paymentTerms||'').trim()); }
+function supMissing(s) {
+  const m = [];
+  if (!s.leadTimeDays) m.push('리드타임');
+  if (!(s.orderMethod||'').trim()) m.push('발주방법');
+  if (!(s.paymentTerms||'').trim()) m.push('결제조건');
+  return m;
+}
 function renderSuppliers() {
   document.getElementById('sup-add-btn').style.display = isMgr() ? '' : 'none';
-  const sups = state.suppliers.filter(s=>s.active !== false);
-  document.getElementById('sup-grid').innerHTML = sups.map(s => `
-    <div class="sup-card" onclick="${isMgr()?`openSupplierEdit(${s.id})`:''}">
-      <h3>${esc(s.name)}</h3>
-      ${s.orderMethod?`<div class="row">발주: <b>${esc(s.orderMethod)}</b></div>`:''}
-      ${s.paymentTerms?`<div class="row" style="line-height:1.4;">${esc(s.paymentTerms)}</div>`:''}
-      <div class="tags">
-        <span class="tag ${s.leadTimeDays?'hot':''}">리드타임 ${s.leadTimeDays?s.leadTimeDays+'일':'미입력'}</span>
-        <span class="tag">품목 ${s.productCount||0}개</span>
-        ${s.chatRoom?`<span class="tag">단톡</span>`:''}
-      </div>
-    </div>`).join('') || '<p class="note">등록된 매입처가 없습니다.</p>';
+  const all = state.suppliers;
+  const live = all.filter(s=>s.active !== false);
+  const counts = {
+    all: live.length,
+    incomplete: live.filter(s=>!supComplete(s)).length,
+    complete: live.filter(s=>supComplete(s)).length,
+    inactive: all.filter(s=>s.active === false).length };
+  const pills = [['all','전체'],['incomplete','⚠ 작성 미완료'],['complete','✅ 작성완료'],['inactive','거래중지']];
+  document.getElementById('sup-pills').innerHTML = pills.map(([k,label]) =>
+    `<div class="pill ${state.filter.supplier===k?'active':''}" onclick="state.filter.supplier='${k}';renderSuppliers()">${label} ${counts[k]}</div>`).join('');
+  let rows = state.filter.supplier==='inactive' ? all.filter(s=>s.active===false)
+    : state.filter.supplier==='incomplete' ? live.filter(s=>!supComplete(s))
+    : state.filter.supplier==='complete' ? live.filter(s=>supComplete(s))
+    : live;
+  const q = (state.q.supplier||'').toLowerCase();
+  if (q) rows = rows.filter(s => (s.name+(s.contact||'')).toLowerCase().includes(q));
+  // 미완료 먼저, 그다음 이름순
+  rows = [...rows].sort((a,b) => (supComplete(a)?1:0)-(supComplete(b)?1:0) || String(a.name).localeCompare(String(b.name),'ko'));
+  document.getElementById('t-supplier-list').innerHTML =
+    `<thead><tr><th>#</th><th>매입처</th><th>상태</th><th class="num">리드타임</th><th>발주방법</th><th>결제조건</th><th>담당/연락처</th><th>단톡</th><th class="num">품목수</th></tr></thead><tbody>` +
+    (rows.length ? rows.map((s,i) => { const miss = supMissing(s);
+      return `<tr onclick="${isMgr()?`openSupplierEdit(${s.id})`:''}" style="cursor:${isMgr()?'pointer':'default'};">
+      <td style="color:var(--sub);">${i+1}</td>
+      <td><b>${esc(s.name)}</b>${s.active===false?' <span class="badge" style="background:var(--gray-bg);color:var(--gray);">중지</span>':''}</td>
+      <td>${supComplete(s)
+        ? '<span class="badge" style="background:var(--green-bg);color:var(--green);">작성완료</span>'
+        : `<span class="badge" style="background:var(--orange-bg);color:var(--orange);">미완료</span> <span style="font-size:11px;color:var(--sub);">${miss.join('·')} 없음</span>`}</td>
+      <td class="num">${s.leadTimeDays ? s.leadTimeDays+'일' : '<span style="color:var(--red);">-</span>'}</td>
+      <td>${esc(s.orderMethod||'') || '<span style="color:var(--sub);">-</span>'}</td>
+      <td style="max-width:230px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(s.paymentTerms||'') || '<span style="color:var(--sub);">-</span>'}</td>
+      <td>${esc(s.contact||'') || '<span style="color:var(--sub);">-</span>'}</td>
+      <td>${s.chatRoom?'✅':'-'}</td>
+      <td class="num">${s.productCount||0}</td></tr>`; }).join('')
+    : '<tr><td colspan="9" style="text-align:center;color:var(--sub);padding:26px;">해당하는 매입처가 없습니다.</td></tr>') + '</tbody>';
 }
 function renderMatch() {
-  let rows = state.products.filter(p=>p.active!==false);
+  const base = state.products.filter(p=>p.active!==false && p.sku!=='WT001');
+  const unassigned = base.filter(p=>!p.supplierId).length;
+  const pills = [['all','전체 '+base.length],['none','⚠ 미지정 '+unassigned],['done','✅ 지정완료 '+(base.length-unassigned)]];
+  document.getElementById('match-pills').innerHTML = pills.map(([k,label]) =>
+    `<div class="pill ${state.filter.match===k?'active':''}" onclick="state.filter.match='${k}';renderMatch()">${label}</div>`).join('');
+  let rows = state.filter.match==='none' ? base.filter(p=>!p.supplierId)
+    : state.filter.match==='done' ? base.filter(p=>p.supplierId) : base;
   const q = state.q.match.toLowerCase();
   if (q) rows = rows.filter(r => (r.name+r.sku+(r.stdCode||'')).toLowerCase().includes(q));
   rows = applySort(rows, 'match', 'stdCode', 1);
+  rows = [...rows].sort((a,b)=>(a.supplierId?1:0)-(b.supplierId?1:0));
   const opts = s => `<option value="">— 미지정 —</option>` + state.suppliers.filter(x=>x.active!==false).map(x=>`<option value="${x.id}" ${s==x.id?'selected':''}>${esc(x.name)}</option>`).join('');
   document.getElementById('t-match').innerHTML =
     `<thead><tr>${th2('코드','stdCode','match')}${th2('품목','name','match')}${th2('제조사(원본)','manufacturer','match')}<th>매입처</th><th class="num">매입처 리드타임</th></tr></thead><tbody>` +
