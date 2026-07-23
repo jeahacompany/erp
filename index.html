@@ -639,10 +639,11 @@ function jumpToReorder(f) { state.filter.reorder = f==='all'?'all':f; showTab('r
 // ---------- 전체 현황 ----------
 function renderStatus() {
   const all = state.rows;
-  const pills = ['all','발주필요','발주임박','재고적정','과다재고','부진재고','품절','재고없음'];
+  const HIDDEN_ST = ['재고없음','데이터부족'];
+  const pills = ['all','발주필요','발주임박','재고적정','과다재고','부진재고','품절','재고없음','데이터부족'];
   document.getElementById('status-pills').innerHTML = pills.map(p =>
-    `<div class="pill ${state.filter.status===p?'active':''}" onclick="state.filter.status='${p}';renderStatus()">${p==='all'?'전체':(p==='재고없음'?'재고없음(숨김)':p)} ${p==='all'?all.filter(r=>r.status!=='재고없음').length:all.filter(r=>r.status===p).length}</div>`).join('');
-  let rows = all.filter(r => state.filter.status==='all' ? r.status!=='재고없음' : r.status===state.filter.status);
+    `<div class="pill ${state.filter.status===p?'active':''}" onclick="state.filter.status='${p}';renderStatus()">${p==='all'?'전체':(HIDDEN_ST.includes(p)?p+'(숨김)':p)} ${p==='all'?all.filter(r=>!HIDDEN_ST.includes(r.status)).length:all.filter(r=>r.status===p).length}</div>`).join('');
+  let rows = all.filter(r => state.filter.status==='all' ? !HIDDEN_ST.includes(r.status) : r.status===state.filter.status);
   const q = state.q.status.toLowerCase();
   if (q) rows = rows.filter(r => (r.name+r.sku+(r.stdCode||'')).toLowerCase().includes(q));
   rows = applySort(rows, 'status', 'stockValue', -1);
@@ -661,10 +662,11 @@ function renderStatus() {
 // ---------- 발주 ----------
 function renderReorder() {
   const all = state.rows;
+  const HIDDEN_ST2 = ['재고없음','데이터부족'];
   const pills = ['all','발주필요','발주임박','품절','과다재고','부진재고','재고적정','재고없음','데이터부족'];
   document.getElementById('reorder-pills').innerHTML = pills.map(p =>
-    `<div class="pill ${state.filter.reorder===p?'active':''}" onclick="state.filter.reorder='${p}';renderReorder()">${p==='all'?'전체':(p==='재고없음'?'재고없음(숨김)':p)} ${p==='all'?all.filter(r=>r.status!=='재고없음').length:all.filter(r=>r.status===p).length}</div>`).join('');
-  let rows = all.filter(r => state.filter.reorder==='all' ? r.status!=='재고없음' : r.status===state.filter.reorder);
+    `<div class="pill ${state.filter.reorder===p?'active':''}" onclick="state.filter.reorder='${p}';renderReorder()">${p==='all'?'전체':(HIDDEN_ST2.includes(p)?p+'(숨김)':p)} ${p==='all'?all.filter(r=>!HIDDEN_ST2.includes(r.status)).length:all.filter(r=>r.status===p).length}</div>`).join('');
+  let rows = all.filter(r => state.filter.reorder==='all' ? !HIDDEN_ST2.includes(r.status) : r.status===state.filter.reorder);
   const q = state.q.reorder.toLowerCase();
   if (q) rows = rows.filter(r => (r.name+r.sku+(r.stdCode||'')).toLowerCase().includes(q));
   rows = applySort(rows, 'reorder', 'recommendedOrder', -1);
@@ -695,7 +697,7 @@ function renderValuation() {
 
 // ---------- 출고분석 ----------
 function renderOutbound() {
-  const rows = applySort(state.rows.filter(r=>r.status!=='재고없음'), 'outbound', 'out30', -1);
+  const rows = applySort(state.rows.filter(r=>!['재고없음','데이터부족'].includes(r.status)), 'outbound', 'out30', -1);
   const cats = {};
   rows.forEach(r => { const c = r.category || '미분류'; cats[c] = cats[c] || {out7:0,out30:0,value:0,n:0};
     cats[c].out7+=r.out7||0; cats[c].out30+=r.out30||0; cats[c].value+=r.stockValue||0; cats[c].n++; });
