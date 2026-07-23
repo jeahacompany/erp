@@ -1099,22 +1099,31 @@ async function createUser() {
 }
 function openUserEdit(username) {
   const u = state.users.find(x=>x.username===username); if (!u) return;
-  openModal(`<h2>${esc(username)} 수정</h2><div class="sub">비밀번호는 입력한 경우에만 변경됩니다.</div>
+  const isBot = username === 'daily-bot';
+  openModal(`<h2>${esc(username)} 수정</h2><div class="sub">${isBot?'⚠ 자동화봇 계정 — 아이디·비번·권한을 바꾸면 매일 자동반영이 멈춰서 잠겨 있습니다.':'비밀번호는 입력한 경우에만 변경됩니다. 아이디를 바꾸면 그 직원은 새 아이디로 로그인해야 합니다.'}</div>
     <div class="form-grid">
+      <div><label>아이디</label><input id="eu-user" value="${esc(username)}" ${isBot?'disabled':''}></div>
       <div><label>이름</label><input id="eu-name" value="${esc(u.displayName||'')}"></div>
-      <div><label>권한</label><select id="eu-role">
+      <div><label>권한</label><select id="eu-role" ${isBot?'disabled':''}>
         <option value="staff" ${u.role==='staff'?'selected':''}>직원</option>
         <option value="manager" ${u.role==='manager'?'selected':''}>매니저</option>
         <option value="admin" ${u.role==='admin'?'selected':''}>관리자</option></select></div>
-      <div><label>새 비밀번호(초기화)</label><input id="eu-pw" placeholder="변경 시에만 입력"></div>
-      <div><label>상태</label><select id="eu-active"><option value="true" ${u.active?'selected':''}>사용</option><option value="false" ${!u.active?'selected':''}>중지</option></select></div>
+      <div><label>새 비밀번호(초기화)</label><input id="eu-pw" placeholder="변경 시에만 입력" ${isBot?'disabled':''}></div>
+      <div><label>상태</label><select id="eu-active" ${isBot?'disabled':''}><option value="true" ${u.active?'selected':''}>사용</option><option value="false" ${!u.active?'selected':''}>중지</option></select></div>
     </div>
     <div class="m-actions"><button class="btn" onclick="closeModal()">취소</button>
     <button class="btn btn-primary" onclick="updateUser('${esc(username)}')">저장</button></div>`);
 }
 async function updateUser(username) {
   try {
-    await api('adminUpdateUser', [session.token, username, {
+    const newId = (document.getElementById('eu-user')?.value || username).trim();
+    let target = username;
+    if (newId && newId !== username) {
+      await api('adminRenameUser', [session.token, username, newId]);
+      target = newId;
+      if (session.username === username) { session.username = newId; localStorage.setItem('erp_session', JSON.stringify(session)); }
+    }
+    await api('adminUpdateUser', [session.token, target, {
       displayName: document.getElementById('eu-name').value,
       role: document.getElementById('eu-role').value,
       newPassword: document.getElementById('eu-pw').value,
