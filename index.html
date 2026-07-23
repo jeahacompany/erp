@@ -217,6 +217,13 @@
       <div class="tbl-wrap"><div class="table-scroll"><table id="t-match"></table></div></div>
     </div>
 
+    <!-- 발주 이력 -->
+    <div id="panel-pos" class="panel">
+      <p class="note">발주서 생성에서 "발주 기록 + 복사"를 누르면 여기에 쌓입니다. 입고 예정일(발주일 + 매입처 리드타임)이 지나도 안 들어오면 <b style="color:var(--red);">지연</b>으로 표시됩니다. 물건이 들어오면 "입고완료"를 눌러주세요.</p>
+      <div class="filters" id="pos-pills"></div>
+      <div class="tbl-wrap"><div class="table-scroll"><table id="t-pos"></table></div></div>
+    </div>
+
     <!-- 매출 -->
     <div id="panel-sales" class="panel">
       <div class="alert">매출 모듈은 다음 단계입니다. 판매채널(스마트스토어·쿠팡 등) 데이터 형태가 정해지면 매출 추이 · 품목별 수익 · 재고 연동 분석이 이 자리에 들어갑니다. DB는 준비돼 있습니다.</div>
@@ -260,8 +267,8 @@ const API_URL = 'https://zcjvriedzememkiltqfa.supabase.co/rest/v1/rpc/erp_api';
 const ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpjanZyaWVkemVtZW1raWx0cWZhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQwMjg2MTIsImV4cCI6MjA5OTYwNDYxMn0.2nZh82xFUNORqcKObAHUnz8K5EjjL-Nym0T4YkDHxMk';
 
 let session = JSON.parse(localStorage.getItem('erp_session') || 'null');
-const state = { rows: [], products: [], suppliers: [], users: [],
-  filter: { status:'all', reorder:'all' }, q: { status:'', reorder:'', products:'', match:'' },
+const state = { rows: [], products: [], suppliers: [], users: [], pos: [],
+  filter: { status:'all', reorder:'all', pos:'all' }, q: { status:'', reorder:'', products:'', match:'' },
   sort: {}, tab: 'status' };
 
 async function api(fn, args) {
@@ -302,6 +309,7 @@ const NAV = [
   { id:'outbound',  ico:'📦', title:'출고 분석' },
   { label:'파트너' },
   { id:'supplier',  ico:'🤝', title:'매입처 관리' },
+  { id:'pos',       ico:'🧾', title:'발주 이력', cnt: () => state.pos.filter(p=>p.overdue).length },
   { label:'매출' },
   { id:'sales',     ico:'📈', title:'매출 (준비중)' },
   { label:'관리', mgr:true },
@@ -338,12 +346,13 @@ function enterApp() {
 
 async function loadAll() {
   try {
-    const [dash, prods, sups] = await Promise.all([
-      api('getDashboard', [session.token]), api('getProducts', [session.token]), api('getSuppliers', [session.token]) ]);
-    state.rows = dash.rows; state.products = prods; state.suppliers = sups;
+    const [dash, prods, sups, pos] = await Promise.all([
+      api('getDashboard', [session.token]), api('getProducts', [session.token]),
+      api('getSuppliers', [session.token]), api('listPos', [session.token, '90']) ]);
+    state.rows = dash.rows; state.products = prods; state.suppliers = sups; state.pos = pos;
     document.getElementById('hd-ref').textContent = dash.refDate || '-';
     document.getElementById('hd-closing').textContent = (dash.lastClosing && dash.lastClosing !== 'null') ? String(dash.lastClosing).replace(/"/g,'') : '아직 없음';
-    renderNav(); renderKpi(); renderStatus(); renderReorder(); renderValuation(); renderOutbound(); renderSuppliers(); renderMatch(); renderProducts();
+    renderNav(); renderKpi(); renderStatus(); renderReorder(); renderValuation(); renderOutbound(); renderSuppliers(); renderMatch(); renderProducts(); renderPos();
     if (session.role === 'admin') loadUsers();
   } catch(e) { toast('불러오기 실패: ' + e.message); }
 }
@@ -792,11 +801,12 @@ function openOrderSheet() {
   openModal(`<h2>📋 발주서 (매입처별)</h2><div class="sub">복사 버튼을 눌러 카톡/문자에 그대로 붙여넣으세요. 수량은 권장발주 기준이며 보내기 전에 조정하셔도 됩니다.</div>` +
     blocks.map((b,i) => `
       <div style="border:1px solid var(--line);border-radius:11px;padding:14px 16px;margin-bottom:12px;">
-        <div style="display:flex;align-items:center;margin-bottom:8px;">
+        <div style="display:flex;align-items:center;margin-bottom:8px;gap:6px;">
           <b style="font-size:14px;">${esc(b.sup)}</b>
-          <span style="color:var(--sub);font-size:12px;margin-left:8px;">${b.items.length}개 품목</span>
+          <span style="color:var(--sub);font-size:12px;margin-left:4px;">${b.items.length}개 품목</span>
           <div style="flex:1;"></div>
-          <button class="btn btn-sm btn-primary" onclick="copyOrder(${i}, this)">복사</button>
+          <button class="btn btn-sm" onclick="copyOrder(${i}, this)">복사만</button>
+          <button class="btn btn-sm btn-primary" onclick="recordAndCopyOrder(${i}, this)">📌 발주 기록 + 복사</button>
         </div>
         <textarea id="order-txt-${i}" style="width:100%;height:${Math.min(60 + b.items.length*22, 200)}px;border:1px solid var(--line);border-radius:8px;padding:10px;font-size:12.5px;font-family:inherit;resize:vertical;">${b.txt}</textarea>
       </div>`).join('') +
@@ -805,8 +815,61 @@ function openOrderSheet() {
 }
 function copyOrder(i, btn) {
   const ta = document.getElementById('order-txt-'+i);
-  ta.select(); navigator.clipboard.writeText(ta.value).then(()=>{ btn.textContent='복사됨 ✓'; setTimeout(()=>btn.textContent='복사',1500); })
+  ta.select(); navigator.clipboard.writeText(ta.value).then(()=>{ btn.textContent='복사됨 ✓'; setTimeout(()=>btn.textContent='복사만',1500); })
     .catch(()=>{ document.execCommand('copy'); btn.textContent='복사됨 ✓'; });
+}
+async function recordAndCopyOrder(i, btn) {
+  const b = window._orderBlocks[i]; if (!b) return;
+  copyOrder(i, btn);
+  try {
+    const items = b.items.map(r=>({ sku:r.sku, qty:r.recommendedOrder, cost:r.cost||0 }));
+    const r = await api('createPo', [session.token, b.sup, items, '발주서 생성에서 기록']);
+    btn.textContent = '기록됨 ✓ (#'+r.poId+')'; btn.disabled = true;
+    const pos = await api('listPos', [session.token, '90']); state.pos = pos; renderPos(); renderNav();
+  } catch(e) { toast(e.message); }
+}
+
+// ---------- 발주 이력 ----------
+const PO_ST = { sent:['대기중','var(--orange-bg)','var(--orange)'], received:['입고완료','var(--green-bg)','var(--green)'], cancelled:['취소','var(--gray-bg)','var(--gray)'] };
+function renderPos() {
+  const all = state.pos;
+  const pills = [['all','전체'],['sent','대기중'],['overdue','⚠ 지연'],['received','입고완료'],['cancelled','취소']];
+  document.getElementById('pos-pills').innerHTML = pills.map(([k,label]) =>
+    `<div class="pill ${state.filter.pos===k?'active':''}" onclick="state.filter.pos='${k}';renderPos()">${label} ${k==='all'?all.length:(k==='overdue'?all.filter(p=>p.overdue).length:all.filter(p=>p.status===k).length)}</div>`).join('');
+  let rows = all.filter(p => state.filter.pos==='all' || (state.filter.pos==='overdue' ? p.overdue : p.status===state.filter.pos));
+  document.getElementById('t-pos').innerHTML =
+    `<thead><tr><th>번호</th><th>발주일</th><th>매입처</th><th class="num">품목</th><th class="num">수량</th><th class="num">예상금액</th><th>입고예정</th><th>상태</th><th>발주자</th></tr></thead><tbody>` +
+    (rows.length ? rows.map(p => { const st = PO_ST[p.status] || [p.status,'var(--gray-bg)','#555'];
+      return `<tr onclick="openPoDetail(${p.id})" style="cursor:pointer;${p.overdue?'background:var(--red-bg);':''}">
+      <td>#${p.id}</td><td>${p.date}</td><td><b>${esc(p.supplier)}</b></td>
+      <td class="num">${p.itemCount}</td><td class="num">${fmt(p.totalQty)}</td><td class="num">${fmt(Math.round(p.totalCost))}원</td>
+      <td>${p.expectedDate||'-'}${p.overdue?' <span style="color:var(--red);font-weight:700;font-size:11px;">지연!</span>':''}</td>
+      <td><span class="badge" style="background:${st[1]};color:${st[2]};">${st[0]}</span>${p.receivedDate?` <span style="font-size:11px;color:var(--sub);">${p.receivedDate}</span>`:''}</td>
+      <td>${esc(p.createdBy||'')}</td></tr>`; }).join('')
+    : '<tr><td colspan="9" style="text-align:center;color:var(--sub);padding:30px;">발주 기록이 없습니다. 안전재고·발주 탭에서 발주서를 만들어보세요.</td></tr>') + '</tbody>';
+}
+function openPoDetail(id) {
+  const p = state.pos.find(x=>x.id===id); if (!p) return;
+  const st = PO_ST[p.status] || [p.status];
+  openModal(`<h2>발주 #${p.id} — ${esc(p.supplier)} <span class="badge" style="background:${st[1]};color:${st[2]};margin-left:6px;">${st[0]}</span></h2>
+    <div class="sub">발주일 ${p.date} · 입고예정 ${p.expectedDate||'-'} ${p.receivedDate?'· 입고일 '+p.receivedDate:''} · ${esc(p.createdBy||'')}</div>
+    <div class="tbl-wrap"><div class="table-scroll" style="max-height:340px;"><table>
+      <thead><tr><th>품목</th><th class="num">수량</th><th class="num">단가</th><th class="num">금액</th></tr></thead><tbody>` +
+    p.items.map(i=>`<tr><td>${esc(i.name)}<div class="name-sub">${i.sku}</div></td><td class="num">${fmt(i.qty)}</td><td class="num">${fmt(i.cost)}</td><td class="num">${fmt(Math.round(i.qty*i.cost))}원</td></tr>`).join('') +
+    `</tbody></table></div></div>
+    <div style="text-align:right;font-weight:700;margin:10px 0 16px;">합계 ${fmt(Math.round(p.totalCost))}원</div>
+    <div class="m-actions">
+      ${isMgr() && p.status==='sent' ? `<button class="btn" onclick="setPoStatus(${p.id},'cancelled')">발주 취소</button>
+      <button class="btn btn-primary" onclick="setPoStatus(${p.id},'received')">✓ 입고완료</button>` : ''}
+      ${isMgr() && p.status!=='sent' ? `<button class="btn" onclick="setPoStatus(${p.id},'sent')">대기중으로 되돌리기</button>` : ''}
+      <button class="btn" onclick="closeModal()">닫기</button></div>`);
+}
+async function setPoStatus(id, status) {
+  try {
+    await api('setPoStatus', [session.token, String(id), status]);
+    toast(status==='received' ? '입고완료 처리됐습니다. 입고 단가가 바뀌었으면 품목 관리에서 "입고 단가 기록"도 해주세요.' : '변경됐습니다');
+    const pos = await api('listPos', [session.token, '90']); state.pos = pos; renderPos(); renderNav(); closeModal();
+  } catch(e) { toast(e.message); }
 }
 
 // ---------- 모달 ----------
