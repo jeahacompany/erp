@@ -165,7 +165,7 @@
 
   <div class="main">
     <div class="topbar">
-      <h1 id="page-title">전체 현황</h1>
+      <h1 id="page-title">한눈에 보기</h1>
       <div class="meta">기준일 <b id="hd-ref">-</b> · 마감반영 <b id="hd-closing">-</b></div>
       <div class="sp">
         <button class="btn btn-sm" onclick="openPwModal()">비밀번호</button>
@@ -177,6 +177,7 @@
 
     <!-- 한눈에 보기 (시각화 보드) -->
     <div id="panel-board" class="panel active">
+      <div id="board-brief" style="margin-bottom:16px;"></div>
       <div class="cards" id="board-kpi"></div>
       <div class="tbl-wrap" style="padding:16px 18px;margin-bottom:14px;">
         <div style="display:flex;align-items:center;margin-bottom:6px;">
@@ -404,6 +405,78 @@ function showTab(id) {
 }
 
 // ---------- 한눈에 보기 (시각화 보드) ----------
+// ---------- 오늘의 브리핑 (자동 인사이트) ----------
+function buildInsights() {
+  const rows = state.rows, s = state.sales, pom = poSkuMap();
+  const out = [];
+  // 1) 품절 임박 — 리드타임 안에 바닥나는데 발주 안 걸린 것
+  const urgent = rows.filter(r => r.daysLeft != null && r.status !== '재고없음' && r.stock > 0
+      && r.daysLeft <= (r.leadTimeDays + 2) && pom[r.sku] === undefined && (r.avg30 > 1 || r.avg7 > 1))
+    .sort((a,b)=>a.daysLeft-b.daysLeft).slice(0,3);
+  urgent.forEach(r => out.push({ lv:'danger', icon:'🚨',
+    text:`<b>${esc(r.name)}</b> — 지금 팔리는 속도면 <b>${fmt(r.daysLeft)}일 뒤 바닥</b>납니다. 입고까지 ${r.leadTimeDays}일 걸리니 ${r.daysLeft <= r.leadTimeDays ? '<b>오늘 발주해도 빠듯해요' : '오늘 발주하면 안 끊깁니다'}</b>. 권장 ${fmt(r.recommendedOrder)}개 (${esc(r.supplierName||'매입처 미지정')})`,
+    act:{ label:'바로 발주', fn:`quickOrder('${r.sku}')` } }));
+  // 2) 품절인데 수요 있는 것
+  const soldOut = rows.filter(r => r.status === '품절' && r.avg30 > 0.5 && pom[r.sku] === undefined)
+    .sort((a,b)=>b.avg30-a.avg30).slice(0,2);
+  soldOut.forEach(r => out.push({ lv:'danger', icon:'⛔',
+    text:`<b>${esc(r.name)}</b> 이 <b>품절</b>인데 평소 하루 ${fmt(r.avg30)}개씩 나가던 상품입니다. 매일 약 ${fmt(Math.round(r.avg30*(r.cost||0)))}원어치 판매 기회가 날아가는 중이에요.`,
+    act:{ label:'발주하기', fn:`quickOrder('${r.sku}')` } }));
+  // 3) 발주 지연
+  const overdue = state.pos.filter(p=>p.overdue);
+  overdue.slice(0,2).forEach(p => out.push({ lv:'warn', icon:'🚚',
+    text:`<b>${esc(p.supplier)}</b> 발주(#${p.id})가 입고예정일(${p.expectedDate})을 지났는데 안 들어왔습니다. 매입처에 확인 연락이 필요해요.`,
+    act:{ label:'발주 이력 보기', fn:`showTab('pos')` } }));
+  // 4) 돈 묶인 과다재고
+  const over = rows.filter(r=>r.status==='과다재고').sort((a,b)=>b.stockValue-a.stockValue)[0];
+  if (over && over.stockValue > 1000000) out.push({ lv:'warn', icon:'💸',
+    text:`<b>${esc(over.name)}</b> 에 <b>${fmt(over.stockValue)}원</b>이 묶여있습니다 (${fmt(over.daysLeft)}일치). 행사·묶음판매로 소진을 고민해볼 타이밍이에요.` });
+  // 5) 부진재고 합계
+  const dead = rows.filter(r=>r.status==='부진재고');
+  const deadVal = dead.reduce((a,r)=>a+(r.stockValue||0),0);
+  if (dead.length >= 2 && deadVal > 300000) out.push({ lv:'warn', icon:'🧊',
+    text:`30일간 한 개도 안 나간 품목이 <b>${dead.length}개, ${fmt(deadVal)}원어치</b> 있습니다. 유통기한 있는 식품이라 처분 계획이 필요할 수 있어요.` });
+  // 6) 매출 흐름 (데이터 2일 이상일 때)
+  if (s && s.byDay.length >= 2) {
+    const [d0, d1] = s.byDay; // 최신, 그 전날
+    if (d1.amount > 0 && d0.amount > 0) {
+      const diff = Math.round((d0.amount - d1.amount) / d1.amount * 100);
+      const dir = diff >= 0 ? `<b style="color:var(--green);">+${diff}%</b> 늘었` : `<b style="color:var(--red);">${diff}%</b> 줄었`;
+      out.push({ lv:'info', icon:'📈',
+        text:`${d0.date.slice(5)}(${DOW[dowOf(d0.date)]}) 매출 <b>${fmt(Math.round(d0.amount))}원</b> — 전날보다 ${dir}습니다.` });
+    }
+    if (s.byDay.length >= 7) {
+      const week = s.byDay.slice(0,7);
+      const best = [...week].sort((a,b)=>b.amount-a.amount)[0];
+      out.push({ lv:'info', icon:'🗓️',
+        text:`최근 7일 중 매출이 가장 좋았던 날은 <b>${best.date.slice(5)}(${DOW[dowOf(best.date)]})</b> ${fmt(Math.round(best.amount))}원입니다.` });
+    }
+  }
+  // 7) 데이터 보강 안내
+  const noPrice = rows.filter(r=>r.salePrice==null && r.out30>0).length;
+  if (noPrice > 5 && out.length < 6) out.push({ lv:'info', icon:'💡',
+    text:`잘 팔리는 품목 중 <b>${noPrice}개</b>가 판매가 미입력입니다. 채워지면 "얼마 남는 장사인지" 마진 분석이 가능해져요.` });
+  return out.slice(0, 6);
+}
+function renderInsights() {
+  const list = buildInsights();
+  const box = document.getElementById('board-brief');
+  const lvStyle = { danger:['#FDEDF0','#F5C2CC'], warn:['#FFF4E6','#FFD8A8'], info:['#F1F6FB','#D4E4F5'] };
+  if (!list.length) {
+    box.innerHTML = `<div class="tbl-wrap" style="padding:14px 18px;background:var(--green-bg);border-color:#B2F2BB;">
+      <b style="font-size:14px;">✅ 오늘의 브리핑</b> <span style="font-size:13px;color:var(--green);">특이사항 없습니다. 재고·발주 모두 안정 범위예요.</span></div>`;
+    return;
+  }
+  box.innerHTML = `<div style="display:flex;align-items:center;gap:8px;margin-bottom:9px;">
+      <b style="font-size:15px;">🧠 오늘의 브리핑</b>
+      <span class="note" style="margin:0;">시스템이 데이터를 읽고 정리한 오늘의 할 일 · ${new Date().toLocaleDateString('ko-KR',{month:'long',day:'numeric',weekday:'short'})}</span></div>` +
+    list.map(i => `<div style="background:${lvStyle[i.lv][0]};border:1px solid ${lvStyle[i.lv][1]};border-radius:11px;padding:11px 15px;margin-bottom:7px;display:flex;align-items:center;gap:11px;">
+      <span style="font-size:17px;">${i.icon}</span>
+      <span style="font-size:13.3px;line-height:1.55;flex:1;">${i.text}</span>
+      ${i.act && isMgr() ? `<button class="btn btn-sm btn-primary" style="white-space:nowrap;" onclick="${i.act.fn}">${i.act.label}</button>` : ''}
+    </div>`).join('');
+}
+
 const charts = {};
 function mkChart(id, cfg) {
   if (charts[id]) charts[id].destroy();
@@ -412,6 +485,7 @@ function mkChart(id, cfg) {
 }
 const C_BRAND='#F26522', C_SET=['#F26522','#20242E','#1971C2','#2F9E44','#E8590C','#997A00','#D6455D','#868E96','#7048E8','#0CA678'];
 function renderBoard() {
+  renderInsights();
   const rows = state.rows, s = state.sales;
   const latestDay = s && s.byDay.length ? s.byDay[0] : null;
   const totAmt30 = s ? s.byChannel.reduce((a,c)=>a+(c.amount||0),0) : 0;
