@@ -339,6 +339,11 @@ async function api(fn, args) {
 }
 function toast(msg) { const t = document.getElementById('toast'); t.textContent = msg; t.style.display='block'; setTimeout(()=>t.style.display='none', 2600); }
 const fmt = n => (n==null||n==='') ? '-' : Number(n).toLocaleString('ko-KR');
+const DOW = ['일','월','화','수','목','금','토'];
+const dowOf = ds => new Date(ds+'T00:00:00').getDay();
+const isWeekend = ds => { const d = dowOf(ds); return d===0 || d===6; };
+const dateLabel = ds => ds.slice(5) + '(' + DOW[dowOf(ds)] + ')';
+const dateCell = ds => `<span style="${isWeekend(ds)?'color:var(--red);font-weight:600;':''}">${ds} (${DOW[dowOf(ds)]})</span>`;
 const esc = s => String(s??'').replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const roleName = r => ({admin:'관리자', manager:'매니저', staff:'직원'})[r] || r;
 const isMgr = () => ['admin','manager'].includes(session?.role);
@@ -419,10 +424,10 @@ function renderBoard() {
     { label:'발주 필요', value: needCount+'건', foot:'발주필요+품절', cls: needCount>0?'v-red':'v-green' },
   ].map(k=>`<div class="card" style="cursor:default;"><div class="label">${k.label}</div><div class="value ${k.cls}" style="font-size:19px;">${k.value}</div><div class="foot">${k.foot}</div></div>`).join('');
 
-  // 일별 추이 (최근 14일, 과거→최신)
-  const days = s ? [...s.byDay].reverse().slice(-14) : [];
+  // 일별 추이 (최근 30일 전체, 과거→최신)
+  const days = s ? [...s.byDay].reverse() : [];
   mkChart('ch-daily', { type:'bar',
-    data: { labels: days.map(d=>d.date.slice(5)),
+    data: { labels: days.map(d=>dateLabel(d.date)),
       datasets: [
         { label:'매출(원)', data: days.map(d=>Math.round(d.amount)), backgroundColor:'#F2652233', borderColor:C_BRAND, borderWidth:1.5, borderRadius:6, yAxisID:'y' },
         { label:'수량(개)', data: days.map(d=>Math.round(d.qty)), type:'line', borderColor:'#20242E', backgroundColor:'#20242E', tension:.3, pointRadius:3, yAxisID:'y1' } ] },
@@ -430,7 +435,8 @@ function renderBoard() {
       plugins:{ legend:{position:'top', labels:{boxWidth:12, font:{size:11}}} },
       scales:{ y:{ position:'left', ticks:{ callback:v=>(v/10000)+'만', font:{size:11} } },
                y1:{ position:'right', grid:{display:false}, ticks:{font:{size:11}} },
-               x:{ grid:{display:false}, ticks:{font:{size:11}} } } } });
+               x:{ grid:{display:false}, ticks:{ font:{size:10.5},
+                 color: c => (days[c.index] && isWeekend(days[c.index].date)) ? '#D6455D' : '#666' } } } } });
 
   // 판매처별 도넛 (상위 7 + 기타)
   if (s) {
@@ -1211,7 +1217,7 @@ function renderSales() {
 
   document.getElementById('t-sales-day').innerHTML =
     `<thead><tr><th>날짜</th><th class="num">수량</th><th class="num">매출</th></tr></thead><tbody>` +
-    s.byDay.map(d=>`<tr><td>${d.date}</td><td class="num">${fmt(Math.round(d.qty))}</td><td class="num">${fmt(Math.round(d.amount))}원</td></tr>`).join('') + '</tbody>';
+    s.byDay.map(d=>`<tr><td>${dateCell(d.date)}</td><td class="num">${fmt(Math.round(d.qty))}</td><td class="num">${fmt(Math.round(d.amount))}원</td></tr>`).join('') + '</tbody>';
 
   document.getElementById('t-sales-sku').innerHTML =
     `<thead><tr><th>품목</th><th class="num">판매수량</th><th class="num">매출</th><th class="num">평균단가(원가)</th><th class="num">매출이익(추정)</th></tr></thead><tbody>` +
