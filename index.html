@@ -217,6 +217,12 @@
       <div class="tbl-wrap"><div class="table-scroll"><table id="t-match"></table></div></div>
     </div>
 
+    <!-- 동일품목 비교 -->
+    <div id="panel-groups" class="panel">
+      <p class="note">같은 상품인데 매입처만 다른 품목들을 묶어서 보여줍니다. <b>통합 재고·수요</b>로 실제 상황을 판단하고, <b>단가 비교</b>로 어디서 사는 게 이득인지 확인하세요. 자동으로 묶였고, 잘못 묶인 건 품목 관리에서 그룹을 바꾸면 됩니다.</p>
+      <div id="groups-list"></div>
+    </div>
+
     <!-- 발주 이력 -->
     <div id="panel-pos" class="panel">
       <p class="note">발주서 생성에서 "발주 기록 + 복사"를 누르면 여기에 쌓입니다. 입고 예정일(발주일 + 매입처 리드타임)이 지나도 안 들어오면 <b style="color:var(--red);">지연</b>으로 표시됩니다. 물건이 들어오면 "입고완료"를 눌러주세요.</p>
@@ -307,6 +313,7 @@ const NAV = [
   { id:'reorder',   ico:'🚨', title:'안전재고·발주', cnt: () => state.rows.filter(r=>['발주필요','품절'].includes(r.status)).length },
   { id:'valuation', ico:'💰', title:'재고원가 순위' },
   { id:'outbound',  ico:'📦', title:'출고 분석' },
+  { id:'groups',    ico:'🧬', title:'동일품목 비교' },
   { label:'파트너' },
   { id:'supplier',  ico:'🤝', title:'매입처 관리' },
   { id:'pos',       ico:'🧾', title:'발주 이력', cnt: () => state.pos.filter(p=>p.overdue).length },
@@ -352,7 +359,7 @@ async function loadAll() {
     state.rows = dash.rows; state.products = prods; state.suppliers = sups; state.pos = pos;
     document.getElementById('hd-ref').textContent = dash.refDate || '-';
     document.getElementById('hd-closing').textContent = (dash.lastClosing && dash.lastClosing !== 'null') ? String(dash.lastClosing).replace(/"/g,'') : '아직 없음';
-    renderNav(); renderKpi(); renderStatus(); renderReorder(); renderValuation(); renderOutbound(); renderSuppliers(); renderMatch(); renderProducts(); renderPos();
+    renderNav(); renderKpi(); renderStatus(); renderReorder(); renderValuation(); renderOutbound(); renderGroups(); renderSuppliers(); renderMatch(); renderProducts(); renderPos();
     if (session.role === 'admin') loadUsers();
   } catch(e) { toast('불러오기 실패: ' + e.message); }
 }
@@ -467,6 +474,45 @@ function renderOutbound() {
       <td class="num">${fmt(r.maxDaily)}</td><td>${r.lastOutDate||'-'}</td></tr>`).join('') + '</tbody>';
 }
 
+// ---------- 동일품목 비교 ----------
+function renderGroups() {
+  const grouped = {};
+  state.rows.forEach(r => { if (r.groupId) (grouped[r.groupId] = grouped[r.groupId] || []).push(r); });
+  const box = document.getElementById('groups-list');
+  const ids = Object.keys(grouped);
+  if (!ids.length) { box.innerHTML = '<p class="note">묶인 품목이 없습니다.</p>'; return; }
+  box.innerHTML = ids.map(gid => {
+    const items = grouped[gid];
+    const gname = items[0].groupName || '그룹';
+    const tStock = items.reduce((s,r)=>s+(r.stock||0),0);
+    const tOut30 = items.reduce((s,r)=>s+(r.out30||0),0);
+    const tValue = items.reduce((s,r)=>s+(r.stockValue||0),0);
+    const rate = tOut30/30;
+    const daysLeft = rate > 0 ? Math.round(tStock/rate*10)/10 : null;
+    const minCost = Math.min(...items.filter(r=>r.cost>0).map(r=>r.cost));
+    const groupWarn = daysLeft != null && daysLeft < 10;
+    return `<div class="tbl-wrap" style="margin-bottom:16px;">
+      <div style="display:flex;align-items:center;gap:10px;padding:13px 16px;border-bottom:1px solid var(--line);flex-wrap:wrap;">
+        <b style="font-size:14.5px;">🧬 ${esc(gname)}</b>
+        <span class="tag">매입처 ${items.length}곳</span>
+        <div style="flex:1;"></div>
+        <span style="font-size:12.5px;color:var(--sub);">통합재고 <b style="color:var(--txt);">${fmt(tStock)}개</b></span>
+        <span style="font-size:12.5px;color:var(--sub);">30일 출고 <b style="color:var(--txt);">${fmt(tOut30)}개</b></span>
+        <span style="font-size:12.5px;color:var(--sub);">재고금액 <b style="color:var(--txt);">${fmt(tValue)}원</b></span>
+        <span style="font-size:12.5px;color:${groupWarn?'var(--red)':'var(--sub)'};">통합 소진예상 <b>${daysLeft==null?'-':fmt(daysLeft)+'일'}</b>${groupWarn?' ⚠':''}</span>
+      </div>
+      <table><thead><tr><th>코드</th><th>품목</th><th>매입처</th><th class="num">개당단가</th><th class="num">재고</th><th class="num">30일 출고</th><th class="num">리드타임</th><th>상태</th></tr></thead><tbody>` +
+      items.sort((a,b)=>(a.cost||1e18)-(b.cost||1e18)).map(r => `
+        <tr onclick="openDetail('${r.sku}')" style="cursor:pointer;">
+        <td>${codeCell(r)}</td><td><div class="name-cell">${esc(r.name)}</div><div class="name-sub">${r.sku}</div></td>
+        <td>${esc(r.supplierName||'미지정')}</td>
+        <td class="num">${fmt(r.cost)}원 ${r.cost===minCost && r.cost>0 ? '<span class="badge" style="background:var(--green-bg);color:var(--green);">최저가</span>':''}</td>
+        <td class="num">${fmt(r.stock)}</td><td class="num">${fmt(r.out30)}</td>
+        <td class="num">${r.leadTimeDays}일</td><td>${badge(r.status)}</td></tr>`).join('') +
+      '</tbody></table></div>';
+  }).join('');
+}
+
 // ---------- 매입처 ----------
 function renderSuppliers() {
   document.getElementById('sup-add-btn').style.display = isMgr() ? '' : 'none';
@@ -568,6 +614,11 @@ function openProductEdit(sku) {
       <div><label>품목 리드타임(일)</label><input id="pe-lead" type="number" value="${p.leadTimeDays??''}" placeholder="비우면 매입처 기본값"></div>
       <div><label>직접 안전재고</label><input id="pe-safe" type="number" value="${p.safetyOverride??''}" placeholder="비우면 자동계산"></div>
       <div><label>매입처</label><select id="pe-sup">${supOpts}</select></div>
+      <div><label>대표품목 그룹 (같은 상품 묶기)</label><select id="pe-group" onchange="if(this.value==='__new'){const n=prompt('새 그룹 이름 (예: 수입산 소곱창 160g)');if(n){window._newGroupName=n;const o=document.createElement('option');o.value='__new';o.textContent='➕ '+n;this.querySelector('option[value=__new]').remove();this.appendChild(o);this.value='__new';}else{this.value='${p.groupId||''}';}}">
+        <option value="">— 그룹 없음 —</option>
+        ${[...new Map(state.products.filter(x=>x.groupId).map(x=>[x.groupId, x.groupName])).entries()].map(([id,nm])=>`<option value="${id}" ${p.groupId==id?'selected':''}>${esc(nm)}</option>`).join('')}
+        <option value="__new">➕ 새 그룹 만들기</option>
+      </select></div>
       <div><label>사용 여부</label><select id="pe-active"><option value="true" ${p.active?'selected':''}>사용</option><option value="false" ${!p.active?'selected':''}>중지</option></select></div>
       <div class="full"><label>메모</label><input id="pe-memo" value="${esc(p.memo||'')}"></div>
     </div>
@@ -592,6 +643,12 @@ async function saveProduct(sku) {
       active: document.getElementById('pe-active').value === 'true',
       memo: document.getElementById('pe-memo').value }]);
     await api('setProductSupplier', [session.token, sku, document.getElementById('pe-sup').value || '']);
+    let gv = document.getElementById('pe-group').value;
+    if (gv === '__new' && window._newGroupName) {
+      const g = await api('saveGroup', [session.token, '', window._newGroupName]);
+      gv = String(g.id); window._newGroupName = null;
+    }
+    await api('setProductGroup', [session.token, sku, gv || '']);
     closeModal(); toast('저장됐습니다'); loadAll();
   } catch(e) { toast(e.message); }
 }
