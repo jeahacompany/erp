@@ -348,10 +348,13 @@
     <div id="panel-upload" class="panel">
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px;flex-wrap:wrap;">
         <b style="font-size:14.5px;">오늘 올릴 파일</b>
-        <span class="note" style="margin:0;">①매출 → ②테무 → ③물류 순서로 올리세요. 파일명에서 날짜를 자동으로 읽습니다.</span>
+        <span class="note" style="margin:0;">①매출 → ②테무 → ③산지 → ④물류 순서. 파일명에서 날짜를 자동으로 읽습니다.</span>
         <div style="flex:1;"></div>
+        <input type="date" id="req-date" class="search-box" style="width:150px;margin:0;padding:6px 10px;">
+        <button class="btn btn-sm btn-primary" onclick="copyRequestMsg(this)">📋 파일 요청 멘트 복사</button>
         <a href="guide.html" target="_blank" class="btn btn-sm">📖 설명서</a>
       </div>
+      <div id="req-msg-box"></div>
       <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:10px 0 4px;" class="board-grid">
         <div class="drop" id="sales-drop" onclick="document.getElementById('sales-file-in').click()" style="padding:20px;margin:0;">
           <div style="font-size:13px;font-weight:700;color:var(--brand);">STEP 1</div>
@@ -386,6 +389,10 @@
       <div id="sales-upload-status"></div>
       <div id="closing-preview"></div>
       <div id="sales-unmatched-box"></div>
+
+      <h3 style="margin:22px 0 4px;font-size:14.5px;">📅 최근 업로드 현황</h3>
+      <p class="note" style="margin-top:2px;">토·일과 공휴일은 원래 자료가 없으므로 <b>누락으로 보지 않습니다.</b> 평일인데 비어 있으면 <span style="color:var(--red);">누락</span>으로 표시되고, 그날이 실제로 휴무였다면 <b>[휴무]</b> 버튼을 눌러주세요 — 다음부터 기억합니다.</p>
+      <div id="upload-status-box"></div>
     </div>
 
     <!-- 직원 -->
@@ -423,7 +430,7 @@ const ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZ
 
 let session = JSON.parse(localStorage.getItem('erp_session') || 'null');
 const state = { rows: [], products: [], suppliers: [], users: [], pos: [], sales: null, sanji: null,
-  sanjiSuppliers: [], sanjiProducts: [], sanjiChanges: [],
+  sanjiSuppliers: [], sanjiProducts: [], sanjiChanges: [], uploadStatus: null,
   filter: { status:'all', reorder:'all', pos:'all', supplier:'all', match:'all', sanjiMatch:'all' },
   q: { status:'', reorder:'', products:'', match:'', supplier:'', sanjiSup:'', sanjiMatch:'' },
   sort: {}, tab: 'board', sub: {} };
@@ -543,7 +550,15 @@ function showTab(id) {
   document.getElementById('page-title').textContent = nav.title;
   renderNav(); renderSubTabs();
   if (['sales','upload','sanjiboard','sanjisup','sanjimatch'].includes(panelId) && !state.sales) loadSales();
-  if (panelId === 'board') { if (!state.sales) { loadSales().then(renderBoard); } else { renderBoard(); } }
+  if (panelId === 'upload') {
+    loadUploadStatus();
+    const rd = document.getElementById('req-date');
+    if (rd && !rd.value) { const t=new Date(); t.setMinutes(t.getMinutes()-t.getTimezoneOffset()); rd.value = t.toISOString().slice(0,10); }
+  }
+  if (panelId === 'board') {
+    if (!state.uploadStatus) loadUploadStatus().then(()=>{ if (state.tab==='board') renderInsights(); });
+    if (!state.sales) { loadSales().then(renderBoard); } else { renderBoard(); }
+  }
   if (panelId === 'logs') loadLogs();
 }
 
@@ -627,6 +642,14 @@ function buildInsights() {
     .sort((a,b)=>(b.avg7*b.cycleDays - b.avgInQty)-(a.avg7*a.cycleDays - a.avgInQty)).slice(0,2);
   chronic.forEach(r => out.push({ lv:'warn', icon:'📉',
     text:`<b>${esc(r.name)}</b> — 평소 <b>${r.cycleDays}일마다 ${fmt(r.avgInQty)}개</b>씩 들어오는데, 그 사이 <b>${fmt(Math.round(r.avg7*r.cycleDays))}개</b>가 나갑니다. 이대로면 계속 아슬아슬해요 — 1회 발주량을 늘리거나 주기를 줄이는 게 좋습니다.` }));
+  // 3-1) 업로드 누락 (주말·공휴일 제외)
+  const us = state.uploadStatus;
+  if (us && us.missingCount > 0) {
+    const miss = us.days.filter(d=>d.status==='missing').slice(0,3).map(d=>d.date.slice(5)+'('+DOW[dowOf(d.date)]+')');
+    out.push({ lv:'danger', icon:'📅',
+      text:`평일인데 자료가 안 올라온 날이 <b>${us.missingCount}일</b> 있습니다 (${miss.join(', ')}${us.missingCount>3?' 외':''}). 그날이 휴무였다면 업로드 탭에서 표시해주세요.`,
+      act:{ label:'업로드 현황', fn:`showTab('upload')` } });
+  }
   // 3-3) 산지 매입단가 인상 감지
   (state.sanjiChanges||[]).filter(c => c.diff > 0).slice(0,2).forEach(c => out.push({ lv:'warn', icon:'📊',
     text:`<b>${esc(c.pname)}</b>${c.popt?' ('+esc(c.popt)+')':''} 매입단가가 <b>${fmt(Math.round(c.prevCost))}원 → ${fmt(Math.round(c.curCost))}원</b>으로 올랐습니다 (${c.diffPct>0?'+':''}${c.diffPct}%, ${c.curDate} 기준). ${c.supplierName?esc(c.supplierName)+'에':'공급사에'} 확인이 필요할 수 있어요.`,
@@ -1667,6 +1690,84 @@ function handleTemuFiles(fileList) {
     };
     reader.readAsArrayBuffer(file);
   });
+}
+
+// ---------- 파일 요청 멘트 ----------
+function reqMsgText(d) {
+  const dt = new Date(d + 'T00:00:00');
+  const m = dt.getMonth() + 1, day = dt.getDate();
+  const nx = new Date(dt); nx.setDate(nx.getDate() + 1);
+  const mm = String(m).padStart(2,'0'), dd = String(day).padStart(2,'0');
+  return `[파일 요청] ${m}월 ${day}일(${DOW[dt.getDay()]})분\n` +
+    `아래 파일들 부탁드립니다. 파일명을 이 형식 그대로 저장해서 주세요.\n\n` +
+    `1. 집에서먹자 ${m}월 ${day}일 매출.xlsx\n` +
+    `2. ${mm}${dd} 테무 1차 발주.xlsx   (차수 여러 개면 그대로 1차·2차·3차)\n` +
+    `3. 집에서먹자 ${m}월 ${day}일 매출 산지.xlsx\n` +
+    `4. 집에서먹자 ${m}월${day}일 출고,입고 ${nx.getDate()}일 시작재고.xlsx\n\n` +
+    `※ 파일명이 다르면 시스템에 업로드되지 않습니다. 날짜만 바꿔서 그대로 써주세요.\n` +
+    `※ 없는 자료(테무·산지 등)는 빼고 주셔도 됩니다.`;
+}
+function copyRequestMsg(btn) {
+  const el = document.getElementById('req-date');
+  const d = el && el.value ? el.value : (()=>{ const t=new Date(); t.setMinutes(t.getMinutes()-t.getTimezoneOffset()); return t.toISOString().slice(0,10); })();
+  const txt = reqMsgText(d);
+  const box = document.getElementById('req-msg-box');
+  box.innerHTML = `<div class="tbl-wrap" style="padding:12px 14px;margin:8px 0;">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+      <b style="font-size:13px;">담당자에게 보낼 멘트</b>
+      <span class="note" style="margin:0;">아래 내용이 클립보드에 복사됐습니다 — 카톡에 붙여넣으세요</span>
+      <div style="flex:1;"></div>
+      <button class="btn btn-sm" onclick="document.getElementById('req-msg-box').innerHTML='';">닫기</button>
+    </div>
+    <textarea id="req-msg-ta" style="width:100%;height:190px;border:1px solid var(--line);border-radius:8px;padding:11px;font-size:12.5px;font-family:inherit;">${esc(txt)}</textarea></div>`;
+  const ta = document.getElementById('req-msg-ta');
+  ta.select();
+  navigator.clipboard.writeText(txt).then(()=>{ btn.textContent='복사됨 ✓'; setTimeout(()=>btn.textContent='📋 파일 요청 멘트 복사',1800); })
+    .catch(()=>{ try{document.execCommand('copy');}catch(e){} btn.textContent='복사됨 ✓'; setTimeout(()=>btn.textContent='📋 파일 요청 멘트 복사',1800); });
+}
+
+// ---------- 업로드 현황 ----------
+async function loadUploadStatus() {
+  try {
+    state.uploadStatus = await api('getUploadStatus', [session.token, '21']);
+    renderUploadStatus();
+  } catch(e) {}
+}
+function renderUploadStatus() {
+  const u = state.uploadStatus; const box = document.getElementById('upload-status-box');
+  if (!u || !box) return;
+  const STY = {
+    ok:      ['#EBFBEE','#2F9E44','완료'],
+    partial: ['#FFF4E6','#E8590C','일부'],
+    missing: ['#FDEDF0','#D6455D','누락'],
+    weekend: ['#F1F3F5','#868E96','주말'],
+    holiday: ['#F1F3F5','#868E96','휴무'],
+  };
+  const alertHtml = (u.missingCount > 0 || u.partialCount > 0)
+    ? `<div class="alert" style="margin-bottom:10px;">⚠ 최근 3주 중 <b>평일인데 자료가 없는 날 ${u.missingCount}일</b>${u.partialCount>0?`, 일부만 올라온 날 ${u.partialCount}일`:''} 있습니다. 아래에서 확인하세요.</div>`
+    : `<div class="alert" style="background:var(--green-bg);border-color:#B2F2BB;color:var(--green);margin-bottom:10px;">✅ 최근 3주 평일 자료가 모두 채워져 있습니다.</div>`;
+  box.innerHTML = alertHtml +
+    `<div class="tbl-wrap"><div class="table-scroll" style="max-height:420px;"><table>
+      <thead><tr><th>날짜</th><th>상태</th><th>매출</th><th>테무·산지</th><th>물류</th><th></th></tr></thead><tbody>` +
+    u.days.map(d => {
+      const st = STY[d.status] || ['#fff','#555',d.status];
+      const isOff = d.status==='weekend' || d.status==='holiday';
+      return `<tr style="${d.status==='missing'?'background:#FFF8F9;':''}">
+        <td>${dateCell(d.date)}</td>
+        <td><span class="badge" style="background:${st[0]};color:${st[1]};">${st[2]}</span>${d.holiday?` <span style="font-size:11px;color:var(--sub);">${esc(d.holiday)}</span>`:''}</td>
+        <td>${d.sales?'<span style="color:var(--green);">✓</span>':(isOff?'<span style="color:var(--sub);">-</span>':'<span style="color:var(--red);">✗</span>')}</td>
+        <td>${d.sanji?'<span style="color:var(--green);">✓</span>':'<span style="color:var(--sub);">-</span>'}</td>
+        <td>${d.closing?'<span style="color:var(--green);">✓</span>':(isOff?'<span style="color:var(--sub);">-</span>':'<span style="color:var(--red);">✗</span>')}</td>
+        <td>${d.status==='missing' && isUploader() ? `<button class="btn btn-sm" onclick="markHoliday('${d.date}',true)">이 날 휴무였음</button>`
+          : (d.status==='holiday' && isUploader() ? `<button class="btn btn-sm" onclick="markHoliday('${d.date}',false)">휴무 해제</button>` : '')}</td></tr>`;
+    }).join('') + '</tbody></table></div></div>';
+}
+async function markHoliday(date, on) {
+  try {
+    await api('markHoliday', [session.token, date, on ? '휴무' : '', on]);
+    toast(on ? '휴무일로 기억합니다' : '휴무 해제됐습니다');
+    await loadUploadStatus();
+  } catch(e) { toast(e.message); }
 }
 
 // ---------- 산지직송(위탁) 업로드 ----------
