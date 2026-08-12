@@ -372,8 +372,9 @@ const isWeekend = ds => { const d = dowOf(ds); return d===0 || d===6; };
 const dateLabel = ds => ds.slice(5) + '(' + DOW[dowOf(ds)] + ')';
 const dateCell = ds => `<span style="${isWeekend(ds)?'color:var(--red);font-weight:600;':''}">${ds} (${DOW[dowOf(ds)]})</span>`;
 const esc = s => String(s??'').replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-const roleName = r => ({admin:'관리자', manager:'매니저', staff:'직원'})[r] || r;
+const roleName = r => ({admin:'관리자', manager:'매니저', uploader:'업로드 직원', staff:'직원'})[r] || r;
 const isMgr = () => ['admin','manager'].includes(session?.role);
+const isUploader = () => ['admin','manager','uploader'].includes(session?.role);
 
 // ---------- 로그인 ----------
 async function doLogin() {
@@ -406,9 +407,9 @@ const NAV = [
   { id:'pos',       ico:'🧾', title:'발주 이력', cnt: () => state.pos.filter(p=>p.overdue).length },
   { label:'매출' },
   { id:'sales',     ico:'📈', title:'매출 분석' },
-  { label:'업로드', mgr:true },
-  { id:'closing',   ico:'📤', title:'마감 업로드', mgr:true },
-  { id:'salesup',   ico:'🧾', title:'매출 업로드', mgr:true, cnt: () => (state.sales?.unmatched||[]).length },
+  { label:'업로드', up:true },
+  { id:'closing',   ico:'📤', title:'마감 업로드', up:true },
+  { id:'salesup',   ico:'🧾', title:'매출 업로드', up:true, cnt: () => (state.sales?.unmatched||[]).length },
   { label:'관리', mgr:true },
   { id:'products',  ico:'🏷️', title:'품목 관리', mgr:true },
   { id:'users',     ico:'👥', title:'직원 계정', admin:true },
@@ -416,7 +417,7 @@ const NAV = [
 ];
 function renderNav() {
   document.getElementById('nav').innerHTML = NAV.filter(n =>
-    (!n.mgr || isMgr()) && (!n.admin || session.role==='admin')
+    (!n.mgr || isMgr()) && (!n.up || isUploader()) && (!n.admin || session.role==='admin')
   ).map(n => n.label !== undefined
     ? `<div class="nav-label">${n.label}</div>`
     : `<div class="nav-item ${state.tab===n.id?'active':''}" onclick="showTab('${n.id}')">
@@ -1089,6 +1090,7 @@ function openUserModal() {
       <div><label>초기 비밀번호</label><input id="nu-pw"></div>
       <div><label>권한</label><select id="nu-role">
         <option value="staff">직원 (조회만)</option>
+        <option value="uploader">업로드 직원 (조회+업로드)</option>
         <option value="manager">매니저 (수정·마감반영)</option>
         <option value="admin">관리자 (전체)</option></select></div>
     </div>
@@ -1114,6 +1116,7 @@ function openUserEdit(username) {
       <div><label>이름</label><input id="eu-name" value="${esc(u.displayName||'')}"></div>
       <div><label>권한</label><select id="eu-role" ${isBot?'disabled':''}>
         <option value="staff" ${u.role==='staff'?'selected':''}>직원</option>
+        <option value="uploader" ${u.role==='uploader'?'selected':''}>업로드 직원</option>
         <option value="manager" ${u.role==='manager'?'selected':''}>매니저</option>
         <option value="admin" ${u.role==='admin'?'selected':''}>관리자</option></select></div>
       <div><label>새 비밀번호(초기화)</label><input id="eu-pw" placeholder="변경 시에만 입력" ${isBot?'disabled':''}></div>
@@ -1492,7 +1495,7 @@ function renderSales() {
 
   const box = document.getElementById('sales-unmatched-box');
   if (!s.unmatched.length) { box.innerHTML = ''; return; }
-  if (!isMgr()) { box.innerHTML = `<div class="alert">미매칭 상품 ${s.unmatched.length}개 — 매니저/관리자가 연결해야 합니다.</div>`; return; }
+  if (!isUploader()) { box.innerHTML = `<div class="alert">미매칭 상품 ${s.unmatched.length}개 — 업로드 권한 이상이 연결해야 합니다.</div>`; return; }
   box.innerHTML = `<div class="alert">🔗 <b>상품 연결 필요 ${s.unmatched.length}개</b> — 판매 상품이 우리 어떤 품목인지 한 번만 연결하면 다음부터 자동입니다. 세트상품(예: 곱창+소스)은 [+구성품]으로 여러 개 지정, "2팩"이면 수량배수 2.</div>` +
     `<datalist id="sku-list">${state.products.map(p=>`<option value="${p.sku}">${esc(p.name)}</option>`).join('')}</datalist>` +
     s.unmatched.map((u,i)=>`
