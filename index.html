@@ -1358,25 +1358,36 @@ function handleSalesFile(file) {
       const wb = XLSX.read(new Uint8Array(e.target.result), { type:'array' });
       const ws = wb.Sheets[wb.SheetNames[0]];
       const raw = XLSX.utils.sheet_to_json(ws, { header:1, raw:true });
-      // 헤더 탐색
-      let hi = -1, c = {};
+      // 헤더 탐색 (두 가지 양식 지원: 발주프로그램 주문 / 송장(출고) 파일)
+      let hi = -1, c = {}, invoiceMode = false;
       for (let i=0; i<Math.min(raw.length,10); i++) {
         const r = (raw[i]||[]).map(x=>String(x??''));
         const f = name => r.findIndex(x=>x===name);
-        const date = f('주문일'), pname = f('판매사상품명'), qty = f('주문수량'), ch = f('판매사');
-        if (date>=0 && pname>=0 && qty>=0 && ch>=0) { hi=i; c={date, pname, popt:f('판매사옵션명'), qty, amt:f('결제금액'), ch}; break; }
+        const qty = f('주문수량'), ch = f('판매사');
+        if (qty>=0 && ch>=0) {
+          const pnameA = f('판매사상품명'), poptA = f('판매사옵션명');
+          const pnameB = f('상품명'), poptB = f('고객선택옵션');
+          if (poptA < 0 && poptB >= 0) { // 송장 양식
+            hi=i; invoiceMode = true; c={date:f('주문일'), pname:pnameB, popt:poptB, qty, amt:f('결제금액'), ch}; break;
+          } else if (pnameA >= 0) {
+            hi=i; c={date:f('주문일'), pname:pnameA, popt:poptA, qty, amt:f('결제금액'), ch}; break;
+          }
+        }
       }
-      if (hi<0) throw new Error('주문일/판매사상품명/주문수량/판매사 컬럼을 찾지 못했습니다');
+      if (hi<0) throw new Error('주문수량/판매사/상품 컬럼을 찾지 못했습니다');
       // 개인정보 없이 (날짜,채널,상품,옵션) 집계
       const agg = {};
       let orders = 0;
       for (let i=hi+1; i<raw.length; i++) {
         const r = raw[i]; if (!r) continue;
         const chv = String(r[c.ch]??'').trim(); if (!chv) continue;
-        let d = r[c.date];
-        if (typeof d === 'number') { const dt = new Date(Math.round((d - 25569) * 86400 * 1000)); d = dt.toISOString().slice(0,10); }
-        else { d = String(d??'').slice(0,10); }
-        if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) continue;
+        let d = '';
+        if (!invoiceMode) {
+          d = r[c.date];
+          if (typeof d === 'number') { const dt = new Date(Math.round((d - 25569) * 86400 * 1000)); d = dt.toISOString().slice(0,10); }
+          else { d = String(d??'').slice(0,10); }
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) continue;
+        }
         const key = [d, chv, String(r[c.pname]??'').trim(), c.popt>=0?String(r[c.popt]??'').trim():''].join('|');
         if (!agg[key]) agg[key] = { date:d, channel:chv, pname:String(r[c.pname]??'').trim(), popt:c.popt>=0?String(r[c.popt]??'').trim():'', qty:0, amount:0 };
         agg[key].qty += Number(r[c.qty]) || 0;
@@ -1385,6 +1396,17 @@ function handleSalesFile(file) {
       }
       const rows = Object.values(agg);
       if (!rows.length) throw new Error('집계할 주문이 없습니다');
+      if (invoiceMode) {
+        // 송장 파일: 전체를 하나의 출고(발송)일로 반영 — 날짜 확인 받기
+        window._pendingSales = { rows, orders };
+        const today = new Date(); today.setMinutes(today.getMinutes()-today.getTimezoneOffset());
+        st.innerHTML = `<div class="alert" style="background:var(--brand-soft);border-color:#FFD8A8;color:#8A4B00;">
+          🧾 송장(출고) 파일 감지 — 주문 ${fmt(orders)}건 / ${rows.length}개 조합.
+          <b>출고(발송) 기준일</b>을 확인하고 반영하세요:
+          <input type="date" id="inv-date" value="${today.toISOString().slice(0,10)}" style="border:1px solid var(--line);border-radius:7px;padding:6px 9px;margin:0 8px;">
+          <button class="btn btn-sm btn-primary" onclick="submitInvoiceSales()">이 날짜로 반영</button></div>`;
+        return;
+      }
       st.innerHTML = `<p class="note">주문 ${fmt(orders)}건 → ${rows.length}개 조합으로 집계, 서버 반영 중...</p>`;
       const res = await api('uploadSales', [session.token, rows]);
       st.innerHTML = `<div class="alert" style="background:var(--green-bg);border-color:#B2F2BB;color:var(--green);">
@@ -1394,6 +1416,23 @@ function handleSalesFile(file) {
     } catch(err) { st.innerHTML = `<div class="alert">❌ ${esc(err.message)}</div>`; }
   };
   reader.readAsArrayBuffer(file);
+}
+
+async function submitInvoiceSales() {
+  const p = window._pendingSales; if (!p) return;
+  const d = document.getElementById('inv-date').value;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) { toast('기준일을 선택하세요'); return; }
+  const st = document.getElementById('sales-upload-status');
+  st.innerHTML = `<p class="note">${d} 출고 기준으로 반영 중...</p>`;
+  try {
+    const rows = p.rows.map(r => ({ ...r, date: d }));
+    const res = await api('uploadSales', [session.token, rows]);
+    st.innerHTML = `<div class="alert" style="background:var(--green-bg);border-color:#B2F2BB;color:var(--green);">
+      ✅ ${d} 출고 반영 완료 — 주문 ${fmt(p.orders)}건 / 매칭 ${res.matched} · 미매칭 ${res.unmatched}
+      ${res.unmatched>0?'— 아래에서 상품만 연결해주면 자동 반영됩니다':''}</div>`;
+    window._pendingSales = null;
+    state.sales = null; loadSales();
+  } catch(e) { st.innerHTML = `<div class="alert">❌ ${esc(e.message)}</div>`; }
 }
 
 async function loadSales() {
