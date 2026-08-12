@@ -298,6 +298,42 @@
       <p class="note" style="margin-top:18px;">🌾 산지직송(위탁) 상세는 <a href="#" style="color:var(--brand);font-weight:600;" onclick="showTab('sanji');return false;">산지직송 탭</a>에서 — 공급사별 실적·단가·마진을 관리합니다.</p>
     </div>
 
+    <!-- 이익 흐름표 -->
+    <div id="panel-pflow" class="panel">
+      <div class="toolbar">
+        <input type="date" id="pf-from" class="search-box" style="width:150px;" onchange="loadProfitFlow()">
+        <span style="color:var(--sub);">~</span>
+        <input type="date" id="pf-to" class="search-box" style="width:150px;" onchange="loadProfitFlow()">
+        <button class="btn btn-sm" onclick="setPfRange(0)">오늘</button>
+        <button class="btn btn-sm" onclick="setPfRange(6)">최근 7일</button>
+        <button class="btn btn-sm" onclick="setPfRange(29)">최근 30일</button>
+        <button class="btn btn-sm" onclick="setPfRange('month')">이번 달</button>
+      </div>
+      <p class="note">매출 − 수수료 − 매출원가 − 배송비원가 = <b>영업이익</b> · 영업이익 − 광고비 − 쿠폰 = <b>순이익</b><br>
+      배송비원가 = 배송건수 × 건당 단가(기본 4,000원, 채널 설정에서 변경) · 산지는 공급사 배송비가 원가에 포함되어 이중계산하지 않습니다. 판관비는 이 표에 넣지 않습니다.</p>
+      <div class="cards" id="pf-kpi"></div>
+      <div class="tbl-wrap"><div class="table-scroll"><table id="t-pflow"></table></div></div>
+      <p class="note">채널 행을 누르면 상품별 상세가 열립니다.</p>
+    </div>
+
+    <!-- 채널 설정·비용입력 -->
+    <div id="panel-chanset" class="panel">
+      <p class="note"><b>판매처별 수수료율</b>과 <b>건당 배송비</b>를 등록하세요. 수수료율을 넣어야 이익 흐름표의 영업이익이 정확해집니다.</p>
+      <div class="tbl-wrap" style="margin-bottom:22px;"><div class="table-scroll" style="max-height:400px;"><table id="t-channels"></table></div></div>
+
+      <h3 style="margin:6px 0 4px;font-size:14.5px;">📣 광고비 · 쿠폰할인 입력</h3>
+      <p class="note" style="margin-top:2px;">날짜와 판매처를 고르고 금액을 넣으세요. 매일 넣어도 되고, 월말에 한 번에 넣어도 됩니다.</p>
+      <div class="toolbar">
+        <input type="date" id="dc-date" class="search-box" style="width:150px;">
+        <select id="dc-channel" class="search-box" style="width:180px;"></select>
+        <input type="number" id="dc-ad" class="search-box" style="width:140px;" placeholder="광고비">
+        <input type="number" id="dc-coupon" class="search-box" style="width:140px;" placeholder="쿠폰할인">
+        <input type="number" id="dc-etc" class="search-box" style="width:140px;" placeholder="기타비용">
+        <button class="btn btn-primary" onclick="saveDailyCost()">저장</button>
+      </div>
+      <div class="tbl-wrap"><div class="table-scroll" style="max-height:360px;"><table id="t-dailycosts"></table></div></div>
+    </div>
+
     <!-- 산지 현황 -->
     <div id="panel-sanjiboard" class="panel">
       <p class="note">우리 창고를 거치지 않는 위탁 상품입니다. 파일에 매입가가 들어있어 <b>건별 마진이 바로 계산</b>됩니다.<br>
@@ -431,6 +467,7 @@ const ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZ
 let session = JSON.parse(localStorage.getItem('doban_session') || 'null');
 const state = { rows: [], products: [], suppliers: [], users: [], pos: [], sales: null, sanji: null,
   sanjiSuppliers: [], sanjiProducts: [], sanjiChanges: [], uploadStatus: null,
+  pflow: null, channels: [], dailyCosts: [],
   filter: { status:'all', reorder:'all', pos:'all', supplier:'all', match:'all', sanjiMatch:'all' },
   q: { status:'', reorder:'', products:'', match:'', supplier:'', sanjiSup:'', sanjiMatch:'' },
   sort: {}, tab: 'board', sub: {} };
@@ -494,7 +531,9 @@ const NAV = [
       { id:'reorder', name:'발주 추천' },
       { id:'pos',     name:'발주 이력·입고', cnt: () => state.pos.filter(p=>p.overdue).length } ] },
   { id:'profit', ico:'📈', title:'매출·손익', subs:[
-      { id:'sales', name:'매출 분석' } ] },
+      { id:'sales',    name:'매출 분석' },
+      { id:'pflow',    name:'💰 이익 흐름표' },
+      { id:'chanset',  name:'채널 설정·비용입력', mgr:true } ] },
   { id:'sanji', ico:'🌾', title:'산지직송',
     cnt: () => state.sanji?.unassigned || 0, subs:[
       { id:'sanjiboard', name:'산지 현황' },
@@ -550,6 +589,8 @@ function showTab(id) {
   document.getElementById('page-title').textContent = nav.title;
   renderNav(); renderSubTabs();
   if (['sales','upload','sanjiboard','sanjisup','sanjimatch'].includes(panelId) && !state.sales) loadSales();
+  if (panelId === 'pflow') { if (!state.pflow) { setPfRange('month'); } else { renderProfitFlow(); } }
+  if (panelId === 'chanset') loadChannels();
   if (panelId === 'upload') {
     loadUploadStatus();
     const rd = document.getElementById('req-date');
@@ -1569,6 +1610,14 @@ function handleSalesFile(file) {
         }
       }
       if (hi<0) throw new Error('주문수량/판매사/상품 컬럼을 찾지 못했습니다');
+      // 배송건수 집계용 컬럼 (개인정보는 건수 세는 데만 쓰고 저장하지 않음)
+      {
+        const hr = (raw[hi]||[]).map(x=>String(x??''));
+        c.track = hr.findIndex(x=>x==='배송번호');
+        c.rname = hr.findIndex(x=>x==='수령자' || x==='수령인 이름');
+        c.addr  = hr.findIndex(x=>x==='주소');
+      }
+      const shipSets = {};
       // 개인정보 없이 (날짜,채널,상품,옵션) 집계
       const agg = {};
       let orders = 0;
@@ -1598,12 +1647,21 @@ function handleSalesFile(file) {
         agg[key].qty += Number(r[c.qty]) || 0;
         agg[key].amount += (c.amt>=0 ? (Number(r[c.amt]) || 0) : 0);
         orders++;
+        // 배송건수(주소 수) 집계 — 배송번호 우선, 없으면 수령자+주소
+        if (c.track>=0 || c.rname>=0) {
+          const shipKey = (c.track>=0 && String(r[c.track]??'').trim())
+            ? String(r[c.track]).trim()
+            : (String(r[c.rname]??'').trim() + '|' + String(r[c.addr]??'').trim());
+          if (!shipSets[chv]) shipSets[chv] = new Set();
+          shipSets[chv].add(shipKey);
+        }
       }
       const rows = Object.values(agg);
       if (!rows.length) throw new Error('집계할 주문이 없습니다');
       if (invoiceMode) {
         // 송장 파일: 전체를 하나의 출고(발송)일로 반영 — 날짜 확인 받기
-        window._pendingSales = { rows, orders };
+        window._pendingSales = { rows, orders,
+          ships: Object.entries(shipSets).map(([ch,set])=>({ channel:ch, orders:set.size })) };
         const nd = window._salesFileDate || (()=>{ const t=new Date(); t.setMinutes(t.getMinutes()-t.getTimezoneOffset()); return t.toISOString().slice(0,10); })();
         st.innerHTML = `<div class="alert" style="background:var(--brand-soft);border-color:#FFD8A8;color:#8A4B00;">
           ${temuMode?'🛒 테무 원본 파일 감지 (채널: 집먹-테무)':'🧾 송장(출고) 파일 감지'} — 주문 ${fmt(orders)}건 / ${rows.length}개 조합.
@@ -1690,6 +1748,168 @@ function handleTemuFiles(fileList) {
     };
     reader.readAsArrayBuffer(file);
   });
+}
+
+// ---------- 이익 흐름표 ----------
+function todayStr(offset) {
+  const t = new Date(); t.setDate(t.getDate() - (offset||0));
+  t.setMinutes(t.getMinutes() - t.getTimezoneOffset());
+  return t.toISOString().slice(0,10);
+}
+function setPfRange(kind) {
+  const f = document.getElementById('pf-from'), t = document.getElementById('pf-to');
+  if (kind === 'month') { const d = new Date(); f.value = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-01`; t.value = todayStr(0); }
+  else { f.value = todayStr(kind); t.value = todayStr(0); }
+  loadProfitFlow();
+}
+async function loadProfitFlow() {
+  const f = document.getElementById('pf-from'), t = document.getElementById('pf-to');
+  if (!f.value) f.value = todayStr(29);
+  if (!t.value) t.value = todayStr(0);
+  try {
+    state.pflow = await api('getProfitFlow', [session.token, f.value, t.value]);
+    renderProfitFlow();
+  } catch(e) { toast(e.message); }
+}
+function renderProfitFlow() {
+  const p = state.pflow; if (!p) return;
+  const rows = p.rows || [];
+  const sum = k => rows.reduce((a,r)=>a+(r[k]||0),0);
+  const rev = sum('revTotal'), cogs = sum('cogsTotal'), fee = sum('fee'), ship = sum('shipCost');
+  const op = sum('opProfit'), ad = sum('ad'), cp = sum('coupon'), net = sum('netProfit');
+  const noFee = rows.filter(r=>!r.cfgSet && r.revTotal>0).length;
+  document.getElementById('pf-kpi').innerHTML = [
+    { label:'총 매출', value: fmt(Math.round(rev))+'원', foot:'자사+산지' },
+    { label:'매출원가', value: fmt(Math.round(cogs))+'원', foot: rev>0?('원가율 '+Math.round(cogs/rev*1000)/10+'%'):'' },
+    { label:'영업이익', value: fmt(Math.round(op))+'원', foot:'수수료·배송비 차감 후', cls: op>=0?'v-green':'v-red' },
+    { label:'순이익', value: fmt(Math.round(net))+'원', foot: rev>0?('순이익율 '+Math.round(net/rev*1000)/10+'%'):'', cls: net>=0?'v-green':'v-red' },
+  ].map(k=>`<div class="card" style="cursor:default;"><div class="label">${k.label}</div><div class="value ${k.cls||''}" style="font-size:19px;">${k.value}</div><div class="foot">${k.foot}</div></div>`).join('');
+
+  const warn = noFee>0 ? `<div class="alert" style="margin-bottom:10px;">⚠ 수수료율이 등록되지 않은 판매처가 <b>${noFee}곳</b> 있습니다 — <a href="#" style="color:var(--brand);font-weight:600;" onclick="showTab('chanset');return false;">채널 설정</a>에서 넣어야 영업이익이 정확해집니다.</div>` : '';
+  document.getElementById('t-pflow').innerHTML = warn.replace(/^/,'') && '' ;
+  const tbl =
+    `<thead><tr><th>판매처</th><th class="num">매출</th><th class="num">수수료</th><th class="num">매출원가</th><th class="num">배송비원가</th><th class="num">영업이익</th><th class="num">광고비</th><th class="num">쿠폰·기타</th><th class="num">순이익</th><th class="num">순이익율</th></tr></thead><tbody>` +
+    (rows.length ? rows.map(r=>`<tr onclick="openProfitDetail('${encodeURIComponent(r.channel)}')" style="cursor:pointer;">
+      <td><b>${esc(r.channel)}</b><div class="name-sub">자사 ${fmt(Math.round(r.ownQty))}개${r.sanjiQty>0?` · 산지 ${fmt(Math.round(r.sanjiQty))}개`:''}</div></td>
+      <td class="num">${fmt(Math.round(r.revTotal))}원${r.sanjiRev>0?`<div class="name-sub">산지 ${fmt(Math.round(r.sanjiRev))}</div>`:''}</td>
+      <td class="num">${r.cfgSet||r.feePct>0 ? fmt(Math.round(r.fee))+'원' : '<span style="color:var(--red);font-size:12px;">미설정</span>'}<div class="name-sub">${r.feePct}%</div></td>
+      <td class="num">${fmt(Math.round(r.cogsTotal))}원${r.noCostRows>0?`<div class="name-sub" style="color:var(--red);">원가없음 ${r.noCostRows}</div>`:''}</td>
+      <td class="num">${fmt(Math.round(r.shipCost))}원<div class="name-sub">${fmt(r.orders)}건</div></td>
+      <td class="num" style="font-weight:700;color:${r.opProfit>=0?'var(--green)':'var(--red)'};">${fmt(Math.round(r.opProfit))}원</td>
+      <td class="num">${r.ad>0?fmt(Math.round(r.ad))+'원':'<span style="color:var(--sub);">-</span>'}</td>
+      <td class="num">${(r.coupon+r.etc)>0?fmt(Math.round(r.coupon+r.etc))+'원':'<span style="color:var(--sub);">-</span>'}</td>
+      <td class="num" style="font-weight:700;color:${r.netProfit>=0?'var(--green)':'var(--red)'};">${fmt(Math.round(r.netProfit))}원</td>
+      <td class="num">${r.netPct!=null?r.netPct+'%':'-'}</td></tr>`).join('')
+    : '<tr><td colspan="10" style="text-align:center;color:var(--sub);padding:26px;">해당 기간 자료가 없습니다.</td></tr>') +
+    `<tr style="background:#FAFAFB;font-weight:700;"><td>합계</td>
+      <td class="num">${fmt(Math.round(rev))}원</td><td class="num">${fmt(Math.round(fee))}원</td>
+      <td class="num">${fmt(Math.round(cogs))}원</td><td class="num">${fmt(Math.round(ship))}원</td>
+      <td class="num" style="color:${op>=0?'var(--green)':'var(--red)'};">${fmt(Math.round(op))}원</td>
+      <td class="num">${fmt(Math.round(ad))}원</td><td class="num">${fmt(Math.round(cp))}원</td>
+      <td class="num" style="color:${net>=0?'var(--green)':'var(--red)'};">${fmt(Math.round(net))}원</td>
+      <td class="num">${rev>0?Math.round(net/rev*1000)/10+'%':'-'}</td></tr></tbody>`;
+  document.getElementById('t-pflow').innerHTML = tbl;
+  const box = document.getElementById('pf-kpi');
+  if (warn && box && !document.getElementById('pf-warn')) {
+    const div = document.createElement('div'); div.id='pf-warn'; div.innerHTML = warn;
+    box.parentNode.insertBefore(div, box);
+  } else if (!warn) { const w = document.getElementById('pf-warn'); if (w) w.remove(); }
+}
+async function openProfitDetail(chEnc) {
+  const ch = decodeURIComponent(chEnc);
+  const f = document.getElementById('pf-from').value, t = document.getElementById('pf-to').value;
+  const r = (state.pflow?.rows||[]).find(x=>x.channel===ch);
+  openModal(`<h2>${esc(ch)} 상세</h2>
+    <div class="sub">${f} ~ ${t} · 수수료율 ${r?r.feePct:0}% · 배송 ${r?fmt(r.orders):0}건</div>
+    ${r?`<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px;">
+      ${[['매출',r.revTotal],['매출원가',r.cogsTotal],['영업이익',r.opProfit],['순이익',r.netProfit]].map(([l,v])=>
+        `<div class="tbl-wrap" style="padding:11px 14px;"><div style="font-size:11.5px;color:var(--sub);">${l}</div><div style="font-size:16px;font-weight:700;">${fmt(Math.round(v))}원</div></div>`).join('')}
+    </div>`:''}
+    <div id="pd-body">불러오는 중...</div>`);
+  try {
+    const d = await api('getProfitDetail', [session.token, ch, f, t]);
+    document.getElementById('pd-body').innerHTML =
+      `<h3 style="margin:4px 0 8px;font-size:14px;">자사재고 상품</h3>
+      <div class="tbl-wrap"><div class="table-scroll" style="max-height:300px;"><table>
+      <thead><tr><th>상품</th><th class="num">수량</th><th class="num">판매단가</th><th class="num">공급단가</th><th class="num">매출</th><th class="num">수수료</th><th class="num">공급가</th><th class="num">영업이익</th><th class="num">마진율</th></tr></thead><tbody>` +
+      (d.own.length ? d.own.map(x=>`<tr><td>${esc(x.name)}</td><td class="num">${fmt(Math.round(x.qty))}</td>
+        <td class="num">${x.unitPrice!=null?fmt(x.unitPrice)+'원':'-'}</td>
+        <td class="num">${x.unitCost!=null?fmt(x.unitCost)+'원':'<span style="color:var(--red);">없음</span>'}</td>
+        <td class="num">${fmt(Math.round(x.rev))}원</td><td class="num">${fmt(Math.round(x.fee))}원</td>
+        <td class="num">${fmt(Math.round(x.cogs))}원</td>
+        <td class="num" style="color:${x.profit>=0?'var(--green)':'var(--red)'};font-weight:650;">${fmt(Math.round(x.profit))}원</td>
+        <td class="num">${x.marginPct!=null?x.marginPct+'%':'-'}</td></tr>`).join('')
+      : '<tr><td colspan="9" style="text-align:center;color:var(--sub);padding:18px;">자료 없음</td></tr>') + '</tbody></table></div></div>' +
+      (d.sanji.length ? `<h3 style="margin:16px 0 8px;font-size:14px;">산지직송</h3>
+      <div class="tbl-wrap"><div class="table-scroll" style="max-height:300px;"><table>
+      <thead><tr><th>상품</th><th>옵션</th><th class="num">수량</th><th class="num">판매단가</th><th class="num">매출</th><th class="num">수수료</th><th class="num">매입+배송</th><th class="num">영업이익</th><th class="num">마진율</th></tr></thead><tbody>` +
+      d.sanji.map(x=>`<tr><td>${esc(x.pname)}</td><td style="font-size:12px;color:var(--sub);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(x.popt)}</td>
+        <td class="num">${fmt(Math.round(x.qty))}</td><td class="num">${x.unitPrice!=null?fmt(x.unitPrice)+'원':'-'}</td>
+        <td class="num">${fmt(Math.round(x.rev))}원</td><td class="num">${fmt(Math.round(x.fee))}원</td>
+        <td class="num">${fmt(Math.round(x.cogs + x.supShip))}원</td>
+        <td class="num" style="color:${x.profit>=0?'var(--green)':'var(--red)'};font-weight:650;">${fmt(Math.round(x.profit))}원</td>
+        <td class="num">${x.marginPct!=null?x.marginPct+'%':'-'}</td></tr>`).join('') + '</tbody></table></div></div>' : '');
+  } catch(e) { document.getElementById('pd-body').textContent = e.message; }
+}
+
+// ---------- 채널 설정 · 비용입력 ----------
+async function loadChannels() {
+  try {
+    const [ch, dc] = await Promise.all([
+      api('getChannels', [session.token, '30']),
+      api('getDailyCosts', [session.token, '60']) ]);
+    state.channels = ch; state.dailyCosts = dc;
+    renderChannels(); renderDailyCosts();
+  } catch(e) { toast(e.message); }
+}
+function renderChannels() {
+  const rows = state.channels || [];
+  document.getElementById('t-channels').innerHTML =
+    `<thead><tr><th>판매처</th><th class="num">30일 매출</th><th class="num">수수료율(%)</th><th class="num">건당 배송비</th><th>메모</th><th></th></tr></thead><tbody>` +
+    (rows.length ? rows.map((c,i)=>`<tr>
+      <td><b>${esc(c.name)}</b></td>
+      <td class="num">${fmt(Math.round(c.amount30))}원</td>
+      <td class="num"><input type="number" step="0.1" id="cf-fee-${i}" value="${c.feePct||''}" placeholder="0" style="width:80px;border:1px solid var(--line);border-radius:7px;padding:6px;text-align:right;"></td>
+      <td class="num"><input type="number" id="cf-ship-${i}" value="${c.shipCostIsDefault?'':c.shipCost}" placeholder="${fmt(c.shipCost)}" style="width:100px;border:1px solid var(--line);border-radius:7px;padding:6px;text-align:right;"></td>
+      <td><input id="cf-memo-${i}" value="${esc(c.memo||'')}" style="width:100%;border:1px solid var(--line);border-radius:7px;padding:6px;"></td>
+      <td><button class="btn btn-sm btn-primary" onclick="saveChannelRow(${i})">저장</button></td></tr>`).join('')
+    : '<tr><td colspan="6" style="text-align:center;color:var(--sub);padding:24px;">판매처 자료가 없습니다.</td></tr>') + '</tbody>';
+  const sel = document.getElementById('dc-channel');
+  if (sel) sel.innerHTML = rows.map(c=>`<option value="${esc(c.name)}">${esc(c.name)}</option>`).join('');
+  const dd = document.getElementById('dc-date');
+  if (dd && !dd.value) dd.value = todayStr(0);
+}
+async function saveChannelRow(i) {
+  const c = state.channels[i]; if (!c) return;
+  try {
+    await api('saveChannel', [session.token, c.name, {
+      feePct: document.getElementById('cf-fee-'+i).value,
+      shipCost: document.getElementById('cf-ship-'+i).value,
+      memo: document.getElementById('cf-memo-'+i).value }]);
+    toast(c.name + ' 저장됨'); await loadChannels(); state.pflow = null; loadProfitFlow();
+  } catch(e) { toast(e.message); }
+}
+function renderDailyCosts() {
+  const rows = state.dailyCosts || [];
+  document.getElementById('t-dailycosts').innerHTML =
+    `<thead><tr><th>날짜</th><th>판매처</th><th class="num">광고비</th><th class="num">쿠폰할인</th><th class="num">기타</th><th>메모</th></tr></thead><tbody>` +
+    (rows.length ? rows.map(r=>`<tr><td>${dateCell(r.date)}</td><td>${esc(r.channel)}</td>
+      <td class="num">${fmt(Math.round(r.adCost))}원</td><td class="num">${fmt(Math.round(r.coupon))}원</td>
+      <td class="num">${fmt(Math.round(r.etcCost))}원</td><td style="font-size:12px;color:var(--sub);">${esc(r.memo||'')}</td></tr>`).join('')
+    : '<tr><td colspan="6" style="text-align:center;color:var(--sub);padding:24px;">입력된 광고비·쿠폰이 없습니다.</td></tr>') + '</tbody>';
+}
+async function saveDailyCost() {
+  const d = document.getElementById('dc-date').value, ch = document.getElementById('dc-channel').value;
+  if (!d || !ch) { toast('날짜와 판매처를 선택하세요'); return; }
+  try {
+    await api('saveDailyCost', [session.token, d, ch, {
+      adCost: document.getElementById('dc-ad').value,
+      coupon: document.getElementById('dc-coupon').value,
+      etcCost: document.getElementById('dc-etc').value }]);
+    toast('저장됐습니다');
+    document.getElementById('dc-ad').value=''; document.getElementById('dc-coupon').value=''; document.getElementById('dc-etc').value='';
+    await loadChannels(); state.pflow = null; loadProfitFlow();
+  } catch(e) { toast(e.message); }
 }
 
 // ---------- 파일 요청 멘트 ----------
@@ -1854,6 +2074,9 @@ async function submitInvoiceSales() {
   try {
     const rows = p.rows.map(r => ({ ...r, date: d }));
     const res = await api('uploadSales', [session.token, rows]);
+    if (p.ships && p.ships.length) {
+      try { await api('saveShipments', [session.token, p.ships.map(s=>({ date:d, channel:s.channel, orders:s.orders }))]); } catch(e) {}
+    }
     st.innerHTML = `<div class="alert" style="background:var(--green-bg);border-color:#B2F2BB;color:var(--green);">
       ✅ ${d} 출고 반영 완료 — 주문 ${fmt(p.orders)}건 / 매칭 ${res.matched} · 미매칭 ${res.unmatched}
       ${res.unmatched>0?'— 아래에서 상품만 연결해주면 자동 반영됩니다':''}</div>`;
