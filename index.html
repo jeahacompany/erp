@@ -309,6 +309,10 @@
         <div><h3 style="margin:4px 0 10px;font-size:14.5px;">일별 추이</h3>
           <div class="tbl-wrap"><div class="table-scroll" style="max-height:340px;"><table id="t-sanji-day"></table></div></div></div>
       </div>
+      <h3 style="margin:6px 0 4px;font-size:14.5px;">📊 매입단가 변동 감지 (최근 30일)</h3>
+      <p class="note" style="margin-top:2px;">업로드된 파일에서 <b>자동으로</b> 잡아낸 변동입니다. 손으로 입력할 필요 없이, 공급사가 단가를 바꾸면 여기에 뜹니다.</p>
+      <div class="tbl-wrap" style="margin-bottom:16px;"><div class="table-scroll" style="max-height:300px;"><table id="t-sanji-changes"></table></div></div>
+
       <h3 style="margin:6px 0 10px;font-size:14.5px;">상품별 마진</h3>
       <div class="tbl-wrap"><div class="table-scroll" style="max-height:420px;"><table id="t-sanji"></table></div></div>
     </div>
@@ -419,7 +423,7 @@ const ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZ
 
 let session = JSON.parse(localStorage.getItem('erp_session') || 'null');
 const state = { rows: [], products: [], suppliers: [], users: [], pos: [], sales: null, sanji: null,
-  sanjiSuppliers: [], sanjiProducts: [],
+  sanjiSuppliers: [], sanjiProducts: [], sanjiChanges: [],
   filter: { status:'all', reorder:'all', pos:'all', supplier:'all', match:'all', sanjiMatch:'all' },
   q: { status:'', reorder:'', products:'', match:'', supplier:'', sanjiSup:'', sanjiMatch:'' },
   sort: {}, tab: 'board', sub: {} };
@@ -623,6 +627,10 @@ function buildInsights() {
     .sort((a,b)=>(b.avg7*b.cycleDays - b.avgInQty)-(a.avg7*a.cycleDays - a.avgInQty)).slice(0,2);
   chronic.forEach(r => out.push({ lv:'warn', icon:'📉',
     text:`<b>${esc(r.name)}</b> — 평소 <b>${r.cycleDays}일마다 ${fmt(r.avgInQty)}개</b>씩 들어오는데, 그 사이 <b>${fmt(Math.round(r.avg7*r.cycleDays))}개</b>가 나갑니다. 이대로면 계속 아슬아슬해요 — 1회 발주량을 늘리거나 주기를 줄이는 게 좋습니다.` }));
+  // 3-3) 산지 매입단가 인상 감지
+  (state.sanjiChanges||[]).filter(c => c.diff > 0).slice(0,2).forEach(c => out.push({ lv:'warn', icon:'📊',
+    text:`<b>${esc(c.pname)}</b>${c.popt?' ('+esc(c.popt)+')':''} 매입단가가 <b>${fmt(Math.round(c.prevCost))}원 → ${fmt(Math.round(c.curCost))}원</b>으로 올랐습니다 (${c.diffPct>0?'+':''}${c.diffPct}%, ${c.curDate} 기준). ${c.supplierName?esc(c.supplierName)+'에':'공급사에'} 확인이 필요할 수 있어요.`,
+    act:{ label:'산지 보기', fn:`showTab('sanjiboard')` } }));
   // 4) 돈 묶인 과다재고
   const over = rows.filter(r=>r.status==='과다재고').sort((a,b)=>b.stockValue-a.stockValue)[0];
   if (over && over.stockValue > 1000000) out.push({ lv:'warn', icon:'💸',
@@ -652,7 +660,9 @@ function buildInsights() {
   const noPrice = rows.filter(r=>r.salePrice==null && r.out30>0).length;
   if (noPrice > 5 && out.length < 6) out.push({ lv:'info', icon:'💡',
     text:`잘 팔리는 품목 중 <b>${noPrice}개</b>가 판매가 미입력입니다. 채워지면 "얼마 남는 장사인지" 마진 분석이 가능해져요.` });
-  return out.slice(0, 6);
+  // 급한 것(danger) 먼저, 그 다음 경고, 정보 순으로
+  const rank = { danger:0, warn:1, info:2 };
+  return out.sort((a,b)=>(rank[a.lv]??9)-(rank[b.lv]??9)).slice(0, 8);
 }
 function renderInsights() {
   const list = buildInsights();
@@ -1757,6 +1767,7 @@ async function loadSales() {
       api('getSanjiSuppliers', [session.token]),
       api('getSanjiProducts', [session.token, '30']) ]);
     state.sales = sd; state.sanji = sj; state.sanjiSuppliers = ss; state.sanjiProducts = sp;
+    try { state.sanjiChanges = await api('getSanjiPriceChanges', [session.token, '30']); } catch(e) { state.sanjiChanges = []; }
     renderSales(); renderSanji(); renderSanjiSuppliers(); renderSanjiMatch(); renderNav(); renderSubTabs();
   } catch(e) { toast(e.message); }
 }
@@ -1872,14 +1883,38 @@ async function openSanjiMatchEdit(pnameEnc, poptEnc) {
       <button class="btn btn-primary" onclick="saveSanjiMatch('${pnameEnc}','${poptEnc}')">저장</button></div>
     <div id="sm-hist" style="margin-top:14px;"></div>`);
   try {
-    const h = await api('getSanjiPriceHistory', [session.token, pname, popt]);
+    const [h, tr] = await Promise.all([
+      api('getSanjiPriceHistory', [session.token, pname, popt]),
+      api('getSanjiTrend', [session.token, pname, popt, '90']) ]);
     const box = document.getElementById('sm-hist'); if (!box) return;
-    box.innerHTML = h.length ? `<label style="font-size:11.5px;color:var(--sub);">단가 변경 이력</label>
+    // 일자별 실제 매입단가 추이 (변동 지점 강조)
+    let trendHtml = '';
+    if (tr.length) {
+      // 변동 계산은 과거→현재 순서로, 표시는 최신순
+      let prev2 = null;
+      const asc = [...tr].reverse();
+      const rows2 = asc.map(x => {
+        const changed = prev2 != null && x.unitCost != null && x.unitCost !== prev2;
+        const diff = changed ? x.unitCost - prev2 : null;
+        const html = `<tr style="${changed?'background:#FFF8F3;':''}"><td>${dateCell(x.date)}</td>
+          <td class="num">${fmt(Math.round(x.qty))}</td>
+          <td class="num"><b>${x.unitCost!=null?fmt(x.unitCost)+'원':'-'}</b>${changed?`<span style="color:${diff>0?'var(--red)':'var(--green)'};font-size:11px;font-weight:700;"> ${diff>0?'▲':'▼'}${fmt(Math.abs(diff))}</span>`:''}</td>
+          <td class="num">${x.unitPrice!=null?fmt(x.unitPrice)+'원':'-'}</td></tr>`;
+        if (x.unitCost != null) prev2 = x.unitCost;
+        return html;
+      }).reverse();
+      trendHtml = `<label style="font-size:11.5px;color:var(--sub);">📊 일자별 실제 매입단가 추이 (파일에서 자동 집계 · 변동일은 색 표시)</label>
+        <div class="tbl-wrap" style="margin:6px 0 14px;"><div class="table-scroll" style="max-height:220px;"><table>
+        <thead><tr><th>날짜</th><th class="num">수량</th><th class="num">매입단가</th><th class="num">판매단가</th></tr></thead>
+        <tbody>${rows2.join('')}</tbody></table></div></div>`;
+    }
+    const histHtml = h.length ? `<label style="font-size:11.5px;color:var(--sub);">✍️ 계약단가 등록 이력 (직접 입력한 값)</label>
       <div class="tbl-wrap" style="margin-top:6px;"><div class="table-scroll" style="max-height:180px;"><table>
       <thead><tr><th>일시</th><th class="num">이전</th><th class="num">변경</th><th>사유</th><th>작업자</th></tr></thead><tbody>` +
       h.map(x=>`<tr><td>${x.at}</td><td class="num">${fmt(x.oldCost)}</td><td class="num"><b>${fmt(x.newCost)}</b></td>
         <td style="font-size:12px;color:var(--sub);">${esc(x.note||'')}</td><td>${esc(x.username||'')}</td></tr>`).join('') +
-      '</tbody></table></div></div>' : '<p class="note" style="margin:0;">단가 변경 이력이 없습니다.</p>';
+      '</tbody></table></div></div>' : '<p class="note" style="margin:0;">계약단가를 등록하면 변경 이력이 여기에 쌓입니다.</p>';
+    box.innerHTML = trendHtml + histHtml;
   } catch(e) {}
 }
 async function saveSanjiMatch(pnameEnc, poptEnc) {
@@ -1914,6 +1949,26 @@ function renderSanji() {
       <td class="num" style="color:${r.margin>=0?'var(--green)':'var(--red)'};">${fmt(Math.round(r.margin))}원</td>
       <td class="num">${r.marginPct!=null?r.marginPct+'%':'-'}</td></tr>`).join('')
     : '<tr><td colspan="5" style="text-align:center;color:var(--sub);padding:22px;">자료 없음</td></tr>') + '</tbody>';
+
+  // 매입단가 변동 감지
+  const chg = state.sanjiChanges || [];
+  const chgBox = document.getElementById('t-sanji-changes');
+  if (chgBox) chgBox.innerHTML =
+    `<thead><tr><th>상품</th><th>옵션</th><th>공급사</th><th class="num">이전 단가</th><th class="num">현재 단가</th><th class="num">변동</th><th>등록단가 대비</th></tr></thead><tbody>` +
+    (chg.length ? chg.map(c => {
+      const up = c.diff > 0;
+      const regGap = (c.regCost!=null) ? Math.round(c.curCost - c.regCost) : null;
+      return `<tr onclick="openSanjiMatchEdit('${encodeURIComponent(c.pname)}','${encodeURIComponent(c.popt)}')" style="cursor:pointer;">
+        <td>${esc(c.pname)}</td>
+        <td style="font-size:12px;color:var(--sub);max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(c.popt)}</td>
+        <td>${c.supplierName?esc(c.supplierName):'<span style="color:var(--red);font-size:12px;">미입력</span>'}</td>
+        <td class="num">${fmt(Math.round(c.prevCost))}원<div class="name-sub">${c.prevDate}</div></td>
+        <td class="num"><b>${fmt(Math.round(c.curCost))}원</b><div class="name-sub">${c.curDate}</div></td>
+        <td class="num" style="color:${up?'var(--red)':'var(--green)'};font-weight:700;">${up?'▲':'▼'} ${fmt(Math.abs(Math.round(c.diff)))}원<div class="name-sub" style="color:${up?'var(--red)':'var(--green)'};">${c.diffPct>0?'+':''}${c.diffPct}%</div></td>
+        <td>${c.regCost!=null
+          ? (Math.abs(regGap)>0 ? `<span style="color:var(--red);font-weight:600;">계약가 ${fmt(c.regCost)}원 대비 ${regGap>0?'+':''}${fmt(regGap)}원</span>` : '<span style="color:var(--green);">계약가와 일치</span>')
+          : '<span style="color:var(--sub);font-size:12px;">계약가 미등록</span>'}</td></tr>`; }).join('')
+    : '<tr><td colspan="7" style="text-align:center;color:var(--sub);padding:22px;">최근 30일 매입단가 변동이 없습니다.</td></tr>') + '</tbody>';
 
   const dayBox = document.getElementById('t-sanji-day');
   if (dayBox) dayBox.innerHTML =
