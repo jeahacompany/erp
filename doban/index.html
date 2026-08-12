@@ -456,6 +456,21 @@
       <h3 style="margin:16px 0 10px;font-size:14.5px;">💰 단가 변경 이력</h3>
       <div class="tbl-wrap"><div class="table-scroll" style="max-height:300px;"><table id="t-pricelog"></table></div></div>
     </div>
+
+    <!-- 데이터 점검 -->
+    <div id="panel-health" class="panel">
+      <p class="note">자료가 꼬였는지 <b>매일 자동으로</b> 훑습니다. 숫자를 못 믿게 되는 상황을 미리 잡는 게 목적이라,
+        의심스러우면 일단 보여줍니다. <b>초록이면 그냥 넘어가면 됩니다.</b></p>
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;">
+        <select id="hl-days" onchange="loadHealth(true)" style="border:1px solid var(--line);border-radius:8px;padding:8px 11px;font-size:13px;">
+          <option value="14">최근 14일</option>
+          <option value="30" selected>최근 30일</option>
+          <option value="90">최근 90일</option>
+        </select>
+        <button class="btn btn-sm" onclick="loadHealth(true)">🔄 다시 점검</button>
+      </div>
+      <div id="health-body"><p class="note">불러오는 중...</p></div>
+    </div>
   </div>
 </div>
 </div>
@@ -474,7 +489,7 @@ const ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZ
 let session = JSON.parse(localStorage.getItem('doban_session') || 'null');
 const state = { rows: [], products: [], suppliers: [], users: [], pos: [], sales: null, sanji: null,
   sanjiSuppliers: [], sanjiProducts: [], sanjiChanges: [], uploadStatus: null,
-  pflow: null, channels: [], dailyCosts: [],
+  pflow: null, channels: [], dailyCosts: [], health: null, healthCount: 0,
   filter: { status:'all', reorder:'all', pos:'all', supplier:'all', match:'all', sanjiMatch:'all' },
   q: { status:'', reorder:'', products:'', match:'', supplier:'', sanjiSup:'', sanjiMatch:'' },
   sort: {}, tab: 'board', sub: {} };
@@ -506,6 +521,15 @@ const dateCell = ds => `<span style="${isWeekend(ds)?'color:var(--red);font-weig
 const esc = s => String(s??'').replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const roleName = r => ({admin:'관리자', manager:'매니저', uploader:'업로드 직원', staff:'직원'})[r] || r;
 const isMgr = () => ['admin','manager'].includes(session?.role);
+// 옵션명 끝의 "x 4", "× 3팩", "200g 5개" 같은 배수를 읽는다.
+// 이걸 1로 두면 판매수량이 배수만큼 적게 잡혀 원가·발주가 통째로 틀어진다.
+function guessMult(popt) {
+  const t = String(popt||'').trim();
+  let m = t.match(/(?:x|X|×)\s*(\d+)\s*(?:팩|개|봉|입|세트)?\s*$/);
+  if (!m) m = t.match(/(\d+)\s*(?:팩|개|봉|입|세트)\s*$/);
+  const n = m ? Number(m[1]) : 1;
+  return (n >= 1 && n <= 50) ? n : 1;
+}
 const isUploader = () => ['admin','manager','uploader'].includes(session?.role);
 
 // ---------- 로그인 ----------
@@ -555,6 +579,7 @@ const NAV = [
       { id:'upload', name:'파일 업로드' } ] },
   { id:'admin', ico:'⚙️', title:'관리', mgr:true, subs:[
       { id:'products', name:'품목 관리' },
+      { id:'health',   name:'데이터 점검', cnt: () => state.healthCount },
       { id:'users',    name:'직원 계정', admin:true },
       { id:'logs',     name:'작업 기록', admin:true } ] },
 ];
@@ -605,9 +630,136 @@ function showTab(id) {
   }
   if (panelId === 'board') {
     if (!state.uploadStatus) loadUploadStatus().then(()=>{ if (state.tab==='board') renderInsights(); });
+    if (!state.health && isMgr()) loadHealth().then(()=>{ if (state.tab==='board') renderInsights(); });
     if (!state.sales) { loadSales().then(renderBoard); } else { renderBoard(); }
   }
   if (panelId === 'logs') loadLogs();
+  if (panelId === 'health') loadHealth();
+}
+
+// ---------- 데이터 점검 ----------
+// 자료가 꼬이는 건 대개 조용히 일어난다. 그래서 의심 항목을 매일 훑어 눈에 보이게 둔다.
+const HEALTH_DEFS = [
+  { key:'badMultiplier', lv:'danger', ico:'✖️', title:'수량배수 누락 의심',
+    why:'옵션명은 "x 4"인데 등록된 수량배수가 1입니다. 판매수량이 4분의 1로 잡혀 원가·발주량이 전부 틀어집니다.',
+    fix:'업로드 탭 → 상품 연결에서 수량배수를 옵션명과 같게 고쳐주세요.',
+    cols:['상품','옵션','SKU','등록','옵션상 배수'],
+    row:r=>[r.pname, r.popt, r.sku, r.qtyPer, `<b style="color:var(--red);">${r.mult}</b>`] },
+  { key:'dupUploads', lv:'danger', ico:'♻️', title:'같은 날짜 중복 업로드',
+    why:'같은 날짜 파일이 여러 번 올라왔습니다. 마지막 것만 남지만, 서로 다른 파일이었다면 값이 뒤바뀌었을 수 있습니다.',
+    fix:'그날 자료가 맞는지 확인하고, 최신 파일로 한 번만 다시 올려주세요.',
+    cols:['종류','날짜','횟수','마지막'],
+    row:r=>[r.action==='upsert_closing'?'물류(재고)':'산지', r.date, r.cnt+'회', r.lastAt] },
+  { key:'negStock', lv:'danger', ico:'📉', title:'재고 마이너스',
+    why:'계산상 재고가 0보다 작습니다. 입고 누락이거나 출고가 두 번 반영된 것입니다.',
+    fix:'해당 품목의 최근 입출고를 확인해주세요.',
+    cols:['SKU','품목','현재고'], row:r=>[r.sku, r.name, `<b style="color:var(--red);">${fmt(r.stock)}</b>`] },
+  { key:'zeroAmount', lv:'warn', ico:'💸', title:'수량만 있고 매출액 0',
+    why:'송장 파일에는 테무·그립 결제금액이 비어 있습니다. 원본을 안 올리면 수량만 잡히고 매출은 0이 됩니다.',
+    fix:'해당 날짜의 테무·그립 원본을 STEP2로 올려주세요.',
+    cols:['날짜','판매처','수량'], row:r=>[r.date, r.channel, fmt(r.qty)] },
+  { key:'outMismatch', lv:'warn', ico:'⚖️', title:'매출↔물류 출고 불일치',
+    why:'주문에서 계산한 출고량과 창고가 실제로 내보낸 수량이 다릅니다. 같은 수량이 하루 차이로 ±로 짝지어 나오면 마감시각 이월이라 정상입니다.',
+    fix:'짝이 안 맞는 항목만 확인해주세요. 상품 연결(구성품·수량배수)이 빠졌을 가능성이 높습니다.',
+    cols:['날짜','품목','주문기준','물류기준','차이'],
+    row:r=>[r.date, r.label + (r.isGroup?' <span class="name-sub">(동일품목 합계)</span>':''),
+            fmt(r.salesOut), fmt(r.logiOut),
+            `<b style="color:${r.diff>0?'var(--red)':'var(--blue,#1971C2)'};">${r.diff>0?'+':''}${fmt(r.diff)}</b>`] },
+  { key:'dupMappings', lv:'warn', ico:'👯', title:'중복 상품 연결',
+    why:'이모지·기호만 다른 같은 상품이 두 번 등록돼 있습니다. 한쪽만 고치면 나머지가 계속 옛날 값으로 들어옵니다.',
+    fix:'업로드 탭 → 상품 연결에서 양쪽 설정을 똑같이 맞춰주세요.',
+    cols:['등록 수','옵션(예시)','연결 SKU'],
+    row:r=>[r.cnt+'개', (r.samples||[]).join('<br>'), (r.skus||[]).filter(Boolean).join(', ')] },
+  { key:'noCost', lv:'warn', ico:'💰', title:'원가 미등록',
+    why:'원가가 없어 이익이 실제보다 크게 보입니다.',
+    fix:'관리 → 품목 관리에서 원가를 넣어주세요.',
+    cols:['SKU','품목','판매수량','매출'], row:r=>[r.sku, r.name, fmt(r.qty), fmt(r.rev)+'원'] },
+  { key:'sanjiNoCost', lv:'warn', ico:'🌾', title:'산지 매입가 0',
+    why:'매입가가 없어 산지 마진이 전부 이익으로 잡힙니다.',
+    fix:'산지직송 → 공급사 관리에서 단가를 넣어주세요.',
+    cols:['상품','옵션','수량','매출'], row:r=>[r.pname, r.popt, fmt(r.qty), fmt(r.rev)+'원'] },
+  { key:'salesNoClosing', lv:'info', ico:'📭', title:'매출은 있는데 물류 자료 없음',
+    why:'그날 재고 마감 파일이 안 올라왔습니다. 재고 수치가 그날부터 실제와 벌어집니다.',
+    fix:'해당 날짜 물류 파일을 STEP4로 올려주세요.',
+    cols:['날짜'], row:r=>[r] },
+  { key:'closingNoSales', lv:'info', ico:'🧾', title:'물류는 있는데 매출 자료 없음',
+    why:'그날 송장 파일이 안 올라왔습니다. 매출·이익이 그날만 비어 보입니다.',
+    fix:'해당 날짜 매출 파일을 STEP1로 올려주세요.',
+    cols:['날짜'], row:r=>[r] },
+  { key:'spikes', lv:'info', ico:'📊', title:'매출 급변한 날',
+    why:'전날 대비 3배 이상 차이납니다. 실제 행사일 수도 있고, 파일이 일부만 올라간 것일 수도 있습니다.',
+    fix:'행사가 아니었다면 그날 파일이 전체가 맞는지 확인해주세요.',
+    cols:['날짜','매출','전날','배수'],
+    row:r=>[r.date, fmt(r.amount)+'원', fmt(r.prevAmount)+'원', r.ratio+'배'] },
+];
+
+async function loadHealth(force) {
+  const box = document.getElementById('health-body');
+  if (state.health && !force) { renderHealth(); return; }
+  if (box) box.innerHTML = '<p class="note">점검 중...</p>';
+  try {
+    const days = document.getElementById('hl-days')?.value || '30';
+    state.health = await api('getDataHealth', [session.token, days]);
+    state.healthCount = healthIssueCount(state.health);
+    renderNav(); renderSubTabs(); renderHealth();
+  } catch(e) { if (box) box.innerHTML = `<div class="alert">❌ ${esc(e.message)}</div>`; }
+}
+function healthList(h, key) {
+  const v = h?.[key];
+  if (Array.isArray(v)) return v;
+  if (key === 'unmatched') return Number(v||0) ? [{ n:Number(v) }] : [];
+  return [];
+}
+function healthIssueCount(h) {
+  if (!h) return 0;
+  return HEALTH_DEFS.reduce((a,d)=> a + healthList(h,d.key).length, 0) + Number(h.unmatched||0);
+}
+function renderHealth() {
+  const box = document.getElementById('health-body');
+  const h = state.health; if (!box || !h) return;
+  const groups = HEALTH_DEFS.map(d=>({ d, rows: healthList(h, d.key) }));
+  const bad = groups.filter(g=>g.rows.length);
+  const um = Number(h.unmatched||0);
+  const okCount = groups.length - bad.length;
+
+  let out = '';
+  if (!bad.length && !um) {
+    out += `<div class="alert" style="background:var(--green-bg);border-color:#B2F2BB;color:var(--green);">
+      ✅ <b>이상 없음</b> — ${groups.length}가지 항목을 모두 확인했고 걸리는 게 없습니다.</div>`;
+  } else {
+    const dn = bad.filter(g=>g.d.lv==='danger').length, wn = bad.filter(g=>g.d.lv==='warn').length;
+    out += `<div class="alert" style="${dn?'background:#FFF5F5;border-color:#FFC9C9;color:var(--red);':'background:var(--brand-soft);border-color:#FFD8A8;color:#8A4B00;'}">
+      ${dn?'🚨':'⚠️'} <b>확인할 것 ${bad.length + (um?1:0)}가지</b>
+      ${dn?`— 그중 ${dn}가지는 지금 바로 봐야 합니다`:'— 급하진 않지만 쌓이면 숫자가 틀어집니다'}
+      · 나머지 ${okCount}가지는 정상입니다.</div>`;
+  }
+  if (um) {
+    out += `<div class="tbl-wrap" style="padding:14px 16px;margin-bottom:12px;border-left:4px solid var(--red);">
+      <div style="font-weight:700;font-size:14px;">🔗 상품 연결 안 된 판매 ${fmt(um)}건</div>
+      <div class="note" style="margin:6px 0 0;">연결 전까지 이 판매는 매출·재고 어디에도 안 잡힙니다.
+      <a href="#" onclick="showTab('upload');return false;"><b>업로드 탭에서 연결하기 →</b></a></div></div>`;
+  }
+  const order = { danger:0, warn:1, info:2 };
+  bad.sort((a,b)=> order[a.d.lv]-order[b.d.lv]);
+  for (const g of bad) {
+    const c = g.d.lv==='danger' ? 'var(--red)' : g.d.lv==='warn' ? '#E8590C' : 'var(--sub)';
+    const rows = g.rows.slice(0, 25);
+    out += `<div class="tbl-wrap" style="padding:14px 16px;margin-bottom:12px;border-left:4px solid ${c};">
+      <div style="font-weight:700;font-size:14px;color:${c};">${g.d.ico} ${g.d.title} <span style="color:var(--sub);font-weight:600;">${fmt(g.rows.length)}건</span></div>
+      <div class="note" style="margin:6px 0 2px;">${g.d.why}</div>
+      <div class="note" style="margin:0 0 10px;"><b>→ ${g.d.fix}</b></div>
+      <div class="table-scroll" style="max-height:300px;"><table>
+        <thead><tr>${g.d.cols.map(x=>`<th>${x}</th>`).join('')}</tr></thead>
+        <tbody>${rows.map(r=>`<tr>${g.d.row(r).map(x=>`<td>${x===undefined?'':x}</td>`).join('')}</tr>`).join('')}</tbody>
+      </table></div>
+      ${g.rows.length>25?`<div class="note" style="margin:8px 0 0;">…외 ${fmt(g.rows.length-25)}건 더 있습니다.</div>`:''}
+    </div>`;
+  }
+  if (bad.length) {
+    out += `<div class="tbl-wrap" style="padding:12px 16px;"><div class="note" style="margin:0;">
+      ✅ 이상 없는 항목: ${groups.filter(g=>!g.rows.length).map(g=>g.d.title).join(' · ') || '없음'}</div></div>`;
+  }
+  box.innerHTML = out;
 }
 
 // ---------- 작업 기록 (admin) ----------
@@ -697,6 +849,24 @@ function buildInsights() {
     out.push({ lv:'danger', icon:'📅',
       text:`평일인데 자료가 안 올라온 날이 <b>${us.missingCount}일</b> 있습니다 (${miss.join(', ')}${us.missingCount>3?' 외':''}). 그날이 휴무였다면 업로드 탭에서 표시해주세요.`,
       act:{ label:'업로드 현황', fn:`showTab('upload')` } });
+  }
+  // 3-4) 데이터 점검에서 걸린 심각 항목 — 숫자를 못 믿게 되기 전에 알린다
+  const hh = state.health;
+  if (hh) {
+    const bm = (hh.badMultiplier||[]).length, du = (hh.dupUploads||[]).length, ns = (hh.negStock||[]).length;
+    if (bm) out.push({ lv:'danger', icon:'✖️',
+      text:`상품 연결 <b>${bm}건</b>에서 <b>수량배수가 빠진 것</b>으로 보입니다 (옵션은 "x N"인데 1로 등록됨). 그대로 두면 판매수량이 실제보다 적게 잡혀 원가와 발주량이 같이 틀어집니다.`,
+      act:{ label:'데이터 점검', fn:`showTab('health')` } });
+    if (du) out.push({ lv:'danger', icon:'♻️',
+      text:`같은 날짜 파일이 <b>${du}건</b> 중복 업로드됐습니다. 서로 다른 파일이었다면 그날 숫자가 뒤바뀌었을 수 있어요.`,
+      act:{ label:'데이터 점검', fn:`showTab('health')` } });
+    if (ns) out.push({ lv:'danger', icon:'📉',
+      text:`재고가 <b>마이너스인 품목 ${ns}개</b>가 있습니다. 입고가 빠졌거나 출고가 두 번 반영된 것입니다.`,
+      act:{ label:'데이터 점검', fn:`showTab('health')` } });
+    const za = (hh.zeroAmount||[]).length;
+    if (za) out.push({ lv:'warn', icon:'💸',
+      text:`수량은 잡혔는데 <b>매출액이 0인 판매처·날짜가 ${za}건</b> 있습니다. 테무·그립 원본을 안 올리면 이익이 실제보다 낮게 보입니다.`,
+      act:{ label:'데이터 점검', fn:`showTab('health')` } });
   }
   // 3-3) 산지 매입단가 인상 감지
   (state.sanjiChanges||[]).filter(c => c.diff > 0).slice(0,2).forEach(c => out.push({ lv:'warn', icon:'📊',
@@ -2395,8 +2565,8 @@ function renderSales() {
         <div style="display:flex;gap:7px;margin-bottom:6px;align-items:center;">
           <input list="sku-list" class="search-box" style="width:150px;margin:0;" placeholder="SKU 입력/검색" id="um-sku-${i}-0" oninput="showSkuName(this)">
           <span style="font-size:12px;color:var(--sub);">× 수량배수</span>
-          <input type="number" value="1" min="0.1" step="0.1" style="width:70px;border:1px solid var(--line);border-radius:7px;padding:7px;text-align:right;" id="um-qty-${i}-0">
-          <span class="name-sub" id="um-nm-${i}-0" style="flex:1;"></span>
+          <input type="number" value="${guessMult(u.popt)}" min="0.1" step="0.1" style="width:70px;border:1px solid var(--line);border-radius:7px;padding:7px;text-align:right;${guessMult(u.popt)>1?'background:#FFF9DB;border-color:#FFD43B;':''}" id="um-qty-${i}-0">
+          <span class="name-sub" id="um-nm-${i}-0" style="flex:1;">${guessMult(u.popt)>1?`<b style="color:#E8590C;">옵션에 "x${guessMult(u.popt)}" 이 있어 배수를 ${guessMult(u.popt)}로 넣었습니다 — 맞는지 확인!</b>`:''}</span>
         </div>
       </div>
       <div style="display:flex;gap:8px;">
