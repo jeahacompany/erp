@@ -301,13 +301,15 @@
         <div class="drop" id="sales-drop" onclick="document.getElementById('sales-file-in').click()" style="padding:20px;">
           <div style="font-size:24px;">🧾</div>
           <div style="font-size:14px;font-weight:600;margin-top:4px;">매출(송장) 엑셀 — 끌어다 놓거나 클릭</div>
-          <div style="font-size:12px;color:var(--sub);margin-top:4px;">발주프로그램 주문 · 송장(출고) 파일 자동 인식</div>
+          <div style="font-size:12px;color:var(--sub);margin-top:6px;">📌 파일명 규칙: <b>"...8월 11일 매출.xlsx"</b> (날짜+"매출" 필수)<br>
+          <b style="color:var(--red);">규칙에 안 맞으면 업로드되지 않습니다</b> · 날짜는 파일명에서 자동 인식</div>
           <input type="file" id="sales-file-in" accept=".xlsx" style="display:none;" onchange="handleSalesFile(this.files[0])">
         </div>
         <div class="drop" id="temu-drop" onclick="document.getElementById('temu-file-in').click()" style="padding:20px;border-color:#7048E8;background:#F3F0FF;">
           <div style="font-size:24px;">🛒</div>
           <div style="font-size:14px;font-weight:600;margin-top:4px;">테무 · 그립 전용</div>
-          <div style="font-size:12px;color:var(--sub);margin-top:4px;">같은 날짜 차수 파일(1차·2차·3차...)을 <b>한꺼번에 모두 선택</b>하세요<br>(그립 원본은 샘플 파일 주시면 지원 추가)</div>
+          <div style="font-size:12px;color:var(--sub);margin-top:6px;">📌 파일명 규칙: <b>"0811 테무 1차 발주.xlsx"</b> (날짜+"테무" 필수)<br>
+          같은 날짜 차수 파일은 <b>한꺼번에 모두 선택</b> · <b style="color:var(--red);">규칙에 안 맞으면 업로드되지 않습니다</b></div>
           <input type="file" id="temu-file-in" accept=".xlsx" multiple style="display:none;" onchange="handleTemuFiles(this.files)">
         </div>
       </div>
@@ -320,7 +322,9 @@
       <p class="note">매일 마감 후 받는 "상품별 재고_요약본" 엑셀을 올리면 그날 입출고·마감재고가 반영됩니다.<br>평소엔 구글드라이브 <b>재고데일리\인박스</b>에 넣으면 자동 반영 — 이 화면은 수동 경로입니다.</p>
       <div class="drop" id="drop" onclick="document.getElementById('file-in').click()">
         <div style="font-size:30px;">📤</div>
-        <div style="font-size:14px;font-weight:600;margin-top:6px;">엑셀 파일을 끌어다 놓거나 클릭해서 선택</div>
+        <div style="font-size:14px;font-weight:600;margin-top:6px;">물류 엑셀을 끌어다 놓거나 클릭해서 선택</div>
+        <div style="font-size:12px;color:var(--sub);margin-top:6px;">📌 파일명 규칙: <b>"...8월11일 출고,입고 12일 시작재고.xlsx"</b> (날짜+"출고,입고" 필수)<br>
+        <b style="color:var(--red);">규칙에 안 맞으면 업로드되지 않습니다</b> · 기준일자는 파일명에서 자동 인식</div>
         <input type="file" id="file-in" accept=".xlsx,.xls" style="display:none;" onchange="handleFile(this.files[0])">
       </div>
       <div id="closing-preview"></div>
@@ -373,6 +377,15 @@ async function api(fn, args) {
   return j.result;
 }
 function toast(msg) { const t = document.getElementById('toast'); t.textContent = msg; t.style.display='block'; setTimeout(()=>t.style.display='none', 2600); }
+// 파일명에서 날짜 추출: "8월 11일" 또는 앞자리 "0811"
+function parseNameDate(fname) {
+  const y = new Date().getFullYear();
+  let m = fname.match(/(\d{1,2})\s*월\s*(\d{1,2})\s*일/);
+  if (m) return `${y}-${String(m[1]).padStart(2,'0')}-${String(m[2]).padStart(2,'0')}`;
+  m = fname.match(/(?:^|[^0-9])(\d{2})(\d{2})[^0-9]/);
+  if (m) { const mo=+m[1], dd=+m[2]; if (mo>=1&&mo<=12&&dd>=1&&dd<=31) return `${y}-${String(mo).padStart(2,'0')}-${String(dd).padStart(2,'0')}`; }
+  return null;
+}
 const fmt = n => (n==null||n==='') ? '-' : Number(n).toLocaleString('ko-KR');
 const DOW = ['일','월','화','수','목','금','토'];
 const dowOf = ds => new Date(ds+'T00:00:00').getDay();
@@ -1032,6 +1045,23 @@ let parsed = null;
     if (ev==='drop') handleFile(e.dataTransfer.files[0]); } }));
 function handleFile(file) {
   if (!file) return;
+  // 파일명 규칙: 날짜 + (출고/입고/시작재고/마감/재고)
+  const fd = parseNameDate(file.name);
+  const isStockName = /출고|입고|시작재고|마감|재고/.test(file.name);
+  if (!fd || !isStockName) {
+    document.getElementById('closing-preview').innerHTML =
+      `<div class="alert">❌ <b>파일명 규칙 위반 — 업로드되지 않았습니다.</b><br>
+      물류 파일은 <b>"...8월11일 출고,입고 12일 시작재고.xlsx"</b> 처럼 <b>날짜 + "출고,입고"(또는 시작재고)</b>가 파일명에 있어야 합니다.<br>
+      올린 파일: ${esc(file.name)} · 매출 파일은 왼쪽 메뉴 "매출 업로드"에 올려주세요.</div>`;
+    return;
+  }
+  // 기준일: "출고,입고" 파일은 파일명 첫 날짜 그대로 / 순수 "시작재고" 파일은 전날 마감
+  let baseDate = fd;
+  if (!/출고|입고/.test(file.name) && /시작재고/.test(file.name)) {
+    const dt = new Date(fd + 'T00:00:00'); dt.setDate(dt.getDate() - 1);
+    baseDate = `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`;
+  }
+  window._closingFileDate = baseDate;
   const reader = new FileReader();
   reader.onload = e => {
     try {
@@ -1059,9 +1089,9 @@ function previewClosing(rows, fname) {
   parsed = data;
   const today = new Date(); today.setMinutes(today.getMinutes()-today.getTimezoneOffset());
   document.getElementById('closing-preview').innerHTML =
-    `<p class="note"><b>${esc(fname)}</b> — ${data.length}개 품목 인식됨. 기준일자 확인 후 반영하세요.</p>
+    `<p class="note"><b>${esc(fname)}</b> — ${data.length}개 품목 인식됨. 기준일자는 <b style="color:var(--green);">파일명에서 자동 인식</b>됐습니다. 확인 후 반영하세요.</p>
     <div class="toolbar">
-      <input type="date" id="closing-date" class="search-box" style="width:170px;" value="${today.toISOString().slice(0,10)}">
+      <input type="date" id="closing-date" class="search-box" style="width:170px;" value="${window._closingFileDate || today.toISOString().slice(0,10)}">
       <button class="btn btn-primary" onclick="submitClosing()">DB에 반영</button>
     </div>
     <div class="tbl-wrap"><div class="table-scroll" style="max-height:340px;"><table><thead><tr><th>SKU</th><th>품목명</th><th class="num">입고</th><th class="num">출고</th><th class="num">마감재고</th></tr></thead><tbody>` +
@@ -1363,6 +1393,14 @@ async function setPoStatus(id, status) {
 function handleSalesFile(file) {
   if (!file) return;
   const st = document.getElementById('sales-upload-status');
+  const fd = parseNameDate(file.name);
+  if (!file.name.includes('매출') || !fd) {
+    st.innerHTML = `<div class="alert">❌ <b>파일명 규칙 위반 — 업로드되지 않았습니다.</b><br>
+      매출 파일은 <b>"...8월 11일 매출.xlsx"</b> 처럼 <b>날짜 + "매출"</b>이 파일명에 있어야 합니다.<br>
+      올린 파일: ${esc(file.name)} · 물류 파일은 왼쪽 메뉴 "마감 업로드"에, 테무는 보라색 칸에 올려주세요.</div>`;
+    return;
+  }
+  window._salesFileDate = fd;
   st.innerHTML = '<p class="note">파일 읽는 중...</p>';
   const reader = new FileReader();
   reader.onload = async e => {
@@ -1428,11 +1466,11 @@ function handleSalesFile(file) {
       if (invoiceMode) {
         // 송장 파일: 전체를 하나의 출고(발송)일로 반영 — 날짜 확인 받기
         window._pendingSales = { rows, orders };
-        const today = new Date(); today.setMinutes(today.getMinutes()-today.getTimezoneOffset());
+        const nd = window._salesFileDate || (()=>{ const t=new Date(); t.setMinutes(t.getMinutes()-t.getTimezoneOffset()); return t.toISOString().slice(0,10); })();
         st.innerHTML = `<div class="alert" style="background:var(--brand-soft);border-color:#FFD8A8;color:#8A4B00;">
           ${temuMode?'🛒 테무 원본 파일 감지 (채널: 집먹-테무)':'🧾 송장(출고) 파일 감지'} — 주문 ${fmt(orders)}건 / ${rows.length}개 조합.
-          <b>출고(발송) 기준일</b>을 확인하고 반영하세요:
-          <input type="date" id="inv-date" value="${today.toISOString().slice(0,10)}" style="border:1px solid var(--line);border-radius:7px;padding:6px 9px;margin:0 8px;">
+          출고 기준일 <b>파일명에서 자동 인식됨</b>:
+          <input type="date" id="inv-date" value="${nd}" style="border:1px solid var(--line);border-radius:7px;padding:6px 9px;margin:0 8px;">
           <button class="btn btn-sm btn-primary" onclick="submitInvoiceSales()">이 날짜로 반영</button></div>`;
         return;
       }
@@ -1455,6 +1493,21 @@ function handleTemuFiles(fileList) {
   const files = [...(fileList||[])];
   if (!files.length) return;
   const st = document.getElementById('sales-upload-status');
+  // 파일명 규칙: '테무' + 날짜(0811 또는 8월11일), 여러 파일이면 전부 같은 날짜
+  const bad = files.filter(f => !f.name.includes('테무') || !parseNameDate(f.name));
+  if (bad.length) {
+    st.innerHTML = `<div class="alert">❌ <b>파일명 규칙 위반 — 업로드되지 않았습니다.</b><br>
+      테무 파일은 <b>"0811 테무 1차 발주.xlsx"</b> 처럼 <b>날짜 + "테무"</b>가 파일명에 있어야 합니다.<br>
+      문제 파일: ${esc(bad.map(f=>f.name).join(', '))}</div>`;
+    return;
+  }
+  const dates = [...new Set(files.map(f=>parseNameDate(f.name)))];
+  if (dates.length > 1) {
+    st.innerHTML = `<div class="alert">❌ <b>날짜가 다른 파일이 섞여 있습니다 — 업로드되지 않았습니다.</b><br>
+      한 번에 올리는 차수 파일은 모두 같은 날짜여야 합니다 (감지된 날짜: ${dates.join(', ')}). 날짜별로 나눠서 올려주세요.</div>`;
+    return;
+  }
+  window._salesFileDate = dates[0];
   st.innerHTML = `<p class="note">테무 파일 ${files.length}개 읽는 중...</p>`;
   const agg = {}; let orders = 0; let done = 0; const errs = [];
   files.forEach(file => {
@@ -1490,11 +1543,10 @@ function handleTemuFiles(fileList) {
         const rows = Object.values(agg);
         if (!rows.length) { st.innerHTML = `<div class="alert">❌ 집계할 주문이 없습니다</div>`; return; }
         window._pendingSales = { rows, orders };
-        const today = new Date(); today.setMinutes(today.getMinutes()-today.getTimezoneOffset());
         st.innerHTML = `<div class="alert" style="background:#F3F0FF;border-color:#D0BFFF;color:#5F3DC4;">
           🛒 테무 ${files.length}개 파일 합산 — 주문 ${fmt(orders)}건 / ${rows.length}개 조합.
-          <b>출고(발송) 기준일</b> 확인 후 반영:
-          <input type="date" id="inv-date" value="${today.toISOString().slice(0,10)}" style="border:1px solid var(--line);border-radius:7px;padding:6px 9px;margin:0 8px;">
+          출고 기준일 <b>파일명에서 자동 인식됨</b>:
+          <input type="date" id="inv-date" value="${window._salesFileDate}" style="border:1px solid var(--line);border-radius:7px;padding:6px 9px;margin:0 8px;">
           <button class="btn btn-sm btn-primary" onclick="submitInvoiceSales()">이 날짜로 반영</button></div>`;
       }
     };
