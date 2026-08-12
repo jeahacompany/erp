@@ -326,7 +326,8 @@
     <!-- 산지 상품 매칭·단가 -->
     <div id="panel-sanjimatch" class="panel">
       <p class="note">판매된 산지 상품에 <b>공급사와 공급단가</b>를 입력합니다. 행을 누르면 수정 · 단가를 바꾸면 <b>변동 이력이 자동 기록</b>됩니다.<br>
-      "실제 매입단가"는 업로드된 파일에서 계산된 값이라, 등록한 공급단가와 다르면 <span style="color:var(--red);">차이</span>가 표시됩니다.</p>
+      <b>판매단가</b>(실제 팔린 개당 금액)와 <b>실제 매입단가</b>는 업로드된 파일에서 계산된 값입니다. 등록한 공급단가와 실제 매입단가가 다르면 <span style="color:var(--red);">차이</span>가 표시됩니다.<br>
+      <b>개당 마진</b> = 판매단가 + 고객배송비 − 매입가 − 공급사배송비 (1개 기준)</p>
       <div class="filters" id="sanjimatch-pills"></div>
       <div class="toolbar"><input class="search-box" placeholder="상품명 / 옵션 검색" oninput="state.q.sanjiMatch=this.value; renderSanjiMatch();"></div>
       <div class="tbl-wrap"><div class="table-scroll"><table id="t-sanji-match"></table></div></div>
@@ -1830,20 +1831,22 @@ function renderSanjiMatch() {
   if (q) rows = rows.filter(r => ((r.pname||'')+(r.popt||'')).toLowerCase().includes(q));
   rows = [...rows].sort((a,b)=>(a.supplierId?1:0)-(b.supplierId?1:0) || (b.amount||0)-(a.amount||0));
   box.innerHTML =
-    `<thead><tr><th>상품</th><th>옵션</th><th>공급사</th><th class="num">등록 단가</th><th class="num">실제 매입단가</th><th class="num">30일 수량</th><th class="num">30일 매출</th><th class="num">마진</th><th class="num">마진율</th></tr></thead><tbody>` +
+    `<thead><tr><th>상품</th><th>옵션</th><th>공급사</th><th class="num">판매단가</th><th class="num">등록 단가</th><th class="num">실제 매입단가</th><th class="num">개당 마진</th><th class="num">30일 수량</th><th class="num">30일 매출</th><th class="num">마진</th><th class="num">마진율</th></tr></thead><tbody>` +
     (rows.length ? rows.map(r => {
       const diff = (r.unitCost!=null && r.actualUnitCost!=null) ? Math.round(r.actualUnitCost - r.unitCost) : null;
       return `<tr onclick="openSanjiMatchEdit('${encodeURIComponent(r.pname)}','${encodeURIComponent(r.popt)}')" style="cursor:pointer;">
         <td>${esc(r.pname)}</td>
-        <td style="font-size:12px;color:var(--sub);max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(r.popt)}</td>
+        <td style="font-size:12px;color:var(--sub);max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(r.popt)}</td>
         <td>${r.supplierName?esc(r.supplierName):'<span style="color:var(--red);font-size:12px;font-weight:600;">미입력</span>'}</td>
+        <td class="num" style="font-weight:650;">${r.unitPrice!=null?fmt(r.unitPrice)+'원':'-'}</td>
         <td class="num">${r.unitCost!=null?fmt(r.unitCost)+'원':'<span style="color:var(--sub);">-</span>'}</td>
         <td class="num">${r.actualUnitCost!=null?fmt(r.actualUnitCost)+'원':'-'}${diff!=null&&Math.abs(diff)>0?`<div class="name-sub" style="color:var(--red);">차이 ${diff>0?'+':''}${fmt(diff)}</div>`:''}</td>
+        <td class="num" style="color:${(r.unitMargin||0)>=0?'var(--green)':'var(--red)'};font-weight:650;">${r.unitMargin!=null?fmt(r.unitMargin)+'원':'-'}</td>
         <td class="num">${fmt(Math.round(r.qty||0))}</td>
         <td class="num">${fmt(Math.round(r.amount||0))}원</td>
         <td class="num" style="color:${(r.margin||0)>=0?'var(--green)':'var(--red)'};font-weight:650;">${fmt(Math.round(r.margin||0))}원</td>
         <td class="num">${r.marginPct!=null?r.marginPct+'%':'-'}</td></tr>`; }).join('')
-    : '<tr><td colspan="9" style="text-align:center;color:var(--sub);padding:26px;">해당하는 상품이 없습니다.</td></tr>') + '</tbody>';
+    : '<tr><td colspan="11" style="text-align:center;color:var(--sub);padding:26px;">해당하는 상품이 없습니다.</td></tr>') + '</tbody>';
 }
 async function openSanjiMatchEdit(pnameEnc, poptEnc) {
   const pname = decodeURIComponent(pnameEnc), popt = decodeURIComponent(poptEnc);
@@ -1852,6 +1855,11 @@ async function openSanjiMatchEdit(pnameEnc, poptEnc) {
     state.sanjiSuppliers.filter(s=>s.active!==false).map(s=>`<option value="${s.id}" ${r.supplierId==s.id?'selected':''}>${esc(s.name)}</option>`).join('');
   openModal(`<h2>${esc(pname)}</h2>
     <div class="sub">${esc(popt)||'(옵션 없음)'} · 30일 판매 ${fmt(Math.round(r.qty||0))}개 · 매출 ${fmt(Math.round(r.amount||0))}원</div>
+    ${r.unitPrice!=null?`<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:14px;">
+      <div class="tbl-wrap" style="padding:11px 14px;"><div style="font-size:11.5px;color:var(--sub);">판매단가 (1개당)</div><div style="font-size:17px;font-weight:700;">${fmt(r.unitPrice)}원</div></div>
+      <div class="tbl-wrap" style="padding:11px 14px;"><div style="font-size:11.5px;color:var(--sub);">실제 매입단가</div><div style="font-size:17px;font-weight:700;">${r.actualUnitCost!=null?fmt(r.actualUnitCost)+'원':'-'}</div></div>
+      <div class="tbl-wrap" style="padding:11px 14px;"><div style="font-size:11.5px;color:var(--sub);">개당 마진</div><div style="font-size:17px;font-weight:700;color:${(r.unitMargin||0)>=0?'var(--green)':'var(--red)'};">${r.unitMargin!=null?fmt(r.unitMargin)+'원':'-'}</div></div>
+    </div>`:''}
     <div class="form-grid">
       <div><label>공급사</label><select id="sm-sup">${opts}</select></div>
       <div><label>공급단가 (1개당)</label><input id="sm-cost" type="number" value="${r.unitCost??''}" placeholder="계약 단가"></div>
