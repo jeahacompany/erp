@@ -1584,11 +1584,13 @@ function renderSales() {
     ? `<div class="alert">🔗 연결 안 된 판매 상품이 <b>${s.unmatched.length}개</b> 있습니다 — <a href="#" style="color:var(--brand);font-weight:600;" onclick="showTab('salesup');return false;">매출 업로드 탭에서 연결</a>하면 집계에 포함됩니다.</div>` : '';
   const totQty = s.byChannel.reduce((a,c)=>a+(c.qty||0),0);
   const totAmt = s.byChannel.reduce((a,c)=>a+(c.amount||0),0);
+  const wt = s.bySku.find(r=>r.sku==='WT001');
+  const wtAmt = wt ? wt.amount : 0;
   document.getElementById('sales-kpi').innerHTML = [
-    { label:'최근 30일 매출(결제금액)', value: fmt(Math.round(totAmt))+'원', foot:'금액 0으로 오는 채널(그립 등)은 제외된 값' },
-    { label:'판매 수량', value: fmt(Math.round(totQty))+'개', foot:'구성품 배수 반영' },
-    { label:'판매처', value: s.byChannel.length+'곳', foot:'' },
-    { label:'미매칭 상품', value: s.unmatched.length+'개', foot: s.unmatched.length?'아래에서 연결 필요':'모두 연결됨' },
+    { label:'최근 30일 매출 (상품값 기준)', value: fmt(Math.round(totAmt))+'원', foot:'배송비 제외 · 금액 없는 채널(그립 등) 미포함' },
+    { label:'자사재고 상품 매출', value: fmt(Math.round(totAmt - wtAmt))+'원', foot:'안성창고 출고 상품' },
+    { label:'위탁(산지직송) 매출', value: fmt(Math.round(wtAmt))+'원', foot:'재고 관리 대상 아님' },
+    { label:'판매 수량 / 미매칭', value: fmt(Math.round(totQty))+'개 / '+s.unmatched.length, foot: s.unmatched.length?'아래에서 연결 필요':'모두 연결됨 ✓' },
   ].map(k=>`<div class="card" style="cursor:default;"><div class="label">${k.label}</div><div class="value" style="font-size:18px;">${k.value}</div><div class="foot">${k.foot}</div></div>`).join('');
 
   document.getElementById('t-sales-channel').innerHTML =
