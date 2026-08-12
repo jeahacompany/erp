@@ -284,11 +284,13 @@
     <div id="panel-sales" class="panel">
       <div id="sales-unmatched-notice"></div>
       <div class="cards" id="sales-kpi"></div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;" id="sales-grids">
-        <div><h3 style="margin:4px 0 10px;font-size:14.5px;">판매처별 (최근 30일)</h3>
-          <div class="tbl-wrap"><div class="table-scroll" style="max-height:380px;"><table id="t-sales-channel"></table></div></div></div>
-        <div><h3 style="margin:4px 0 10px;font-size:14.5px;">일별 추이</h3>
+      <h3 style="margin:6px 0 8px;font-size:14.5px;">판매처별 (최근 30일) — 자사재고 + 산지직송 합산</h3>
+      <div class="tbl-wrap" style="margin-bottom:16px;"><div class="table-scroll" style="max-height:420px;"><table id="t-sales-channel"></table></div></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;" id="sales-grids" class="board-grid">
+        <div><h3 style="margin:4px 0 10px;font-size:14.5px;">일별 추이 (자사재고)</h3>
           <div class="tbl-wrap"><div class="table-scroll" style="max-height:380px;"><table id="t-sales-day"></table></div></div></div>
+        <div><h3 style="margin:4px 0 10px;font-size:14.5px;">일별 추이 (산지직송)</h3>
+          <div class="tbl-wrap"><div class="table-scroll" style="max-height:380px;"><table id="t-sales-day2"></table></div></div></div>
       </div>
       <h3 style="margin:16px 0 10px;font-size:14.5px;">품목별 판매 (최근 30일)</h3>
       <div class="tbl-wrap"><div class="table-scroll" style="max-height:420px;"><table id="t-sales-sku"></table></div></div>
@@ -1939,14 +1941,41 @@ function renderSales() {
     { label:'판매 수량 / 미매칭', value: fmt(Math.round(totQty))+'개 / '+s.unmatched.length, foot: s.unmatched.length?'아래에서 연결 필요':'모두 연결됨 ✓' },
   ].map(k=>`<div class="card" style="cursor:default;"><div class="label">${k.label}</div><div class="value" style="font-size:18px;">${k.value}</div><div class="foot">${k.foot}</div></div>`).join('');
 
+  // 판매처별 통합: 자사재고 + 산지직송
+  const chMap = {};
+  (s.byChannel||[]).forEach(c => { chMap[c.channel] = chMap[c.channel] || { own:0, ownQty:0, sanji:0, sanjiQty:0, sanjiMargin:0 };
+    chMap[c.channel].own += c.amount||0; chMap[c.channel].ownQty += c.qty||0; });
+  ((state.sanji?.byChannel)||[]).forEach(c => { chMap[c.channel] = chMap[c.channel] || { own:0, ownQty:0, sanji:0, sanjiQty:0, sanjiMargin:0 };
+    chMap[c.channel].sanji += c.amount||0; chMap[c.channel].sanjiQty += c.qty||0; chMap[c.channel].sanjiMargin += c.margin||0; });
+  const chRows = Object.entries(chMap).map(([ch,v]) => ({ ch, ...v, total: v.own + v.sanji }))
+    .sort((a,b)=>b.total-a.total);
+  const grand = chRows.reduce((a,r)=>a+r.total,0) || 1;
   document.getElementById('t-sales-channel').innerHTML =
-    `<thead><tr><th>판매처</th><th class="num">수량</th><th class="num">매출</th></tr></thead><tbody>` +
-    s.byChannel.map(c=>`<tr><td><b>${esc(c.channel)}</b></td><td class="num">${fmt(Math.round(c.qty))}</td>
-      <td class="num">${c.amount>0?fmt(Math.round(c.amount))+'원':'<span style="color:var(--sub);">금액없음</span>'}</td></tr>`).join('') + '</tbody>';
+    `<thead><tr><th>판매처</th><th class="num">자사재고 매출</th><th class="num">산지직송 매출</th><th class="num">합계</th><th class="num">비중</th><th class="num">산지 마진</th></tr></thead><tbody>` +
+    chRows.map(r=>`<tr>
+      <td><b>${esc(r.ch)}</b><div class="name-sub">${fmt(Math.round(r.ownQty+r.sanjiQty))}개</div></td>
+      <td class="num">${r.own>0?fmt(Math.round(r.own))+'원':'<span style="color:var(--sub);">-</span>'}</td>
+      <td class="num">${r.sanji>0?fmt(Math.round(r.sanji))+'원':'<span style="color:var(--sub);">-</span>'}</td>
+      <td class="num"><b>${fmt(Math.round(r.total))}원</b></td>
+      <td class="num" style="width:130px;"><div style="display:flex;align-items:center;gap:6px;"><div style="flex:1;height:5px;background:var(--gray-bg);border-radius:99px;overflow:hidden;"><div style="width:${Math.round(r.total/grand*100)}%;height:100%;background:var(--brand);"></div></div><span style="font-size:11px;color:var(--sub);">${Math.round(r.total/grand*100)}%</span></div></td>
+      <td class="num" style="color:${r.sanjiMargin>0?'var(--green)':'var(--sub)'};">${r.sanjiMargin>0?fmt(Math.round(r.sanjiMargin))+'원':'-'}</td></tr>`).join('') +
+    `<tr style="background:#FAFAFB;font-weight:700;"><td>합계</td>
+      <td class="num">${fmt(Math.round(chRows.reduce((a,r)=>a+r.own,0)))}원</td>
+      <td class="num">${fmt(Math.round(chRows.reduce((a,r)=>a+r.sanji,0)))}원</td>
+      <td class="num">${fmt(Math.round(grand))}원</td><td></td>
+      <td class="num" style="color:var(--green);">${fmt(Math.round(chRows.reduce((a,r)=>a+r.sanjiMargin,0)))}원</td></tr></tbody>`;
 
   document.getElementById('t-sales-day').innerHTML =
     `<thead><tr><th>날짜</th><th class="num">수량</th><th class="num">매출</th></tr></thead><tbody>` +
     s.byDay.map(d=>`<tr><td>${dateCell(d.date)}</td><td class="num">${fmt(Math.round(d.qty))}</td><td class="num">${fmt(Math.round(d.amount))}원</td></tr>`).join('') + '</tbody>';
+
+  const sd2 = document.getElementById('t-sales-day2');
+  if (sd2) sd2.innerHTML =
+    `<thead><tr><th>날짜</th><th class="num">수량</th><th class="num">매출</th><th class="num">마진</th></tr></thead><tbody>` +
+    (((state.sanji?.byDay)||[]).length ? state.sanji.byDay.map(d=>`<tr><td>${dateCell(d.date)}</td>
+      <td class="num">${fmt(Math.round(d.qty))}</td><td class="num">${fmt(Math.round(d.amount))}원</td>
+      <td class="num" style="color:${d.margin>=0?'var(--green)':'var(--red)'};">${fmt(Math.round(d.margin))}원</td></tr>`).join('')
+    : '<tr><td colspan="4" style="text-align:center;color:var(--sub);padding:22px;">산지 자료 없음</td></tr>') + '</tbody>';
 
   document.getElementById('t-sales-sku').innerHTML =
     `<thead><tr><th>품목</th><th class="num">판매수량</th><th class="num">매출</th><th class="num">평균단가(원가)</th><th class="num">매출이익(추정)</th></tr></thead><tbody>` +
