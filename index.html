@@ -1037,10 +1037,10 @@ function previewClosing(rows, fname) {
   let hi = -1, map = {};
   for (let i=0; i<Math.min(rows.length,10); i++) {
     const r = (rows[i]||[]).map(c=>String(c??''));
-    const find = pats => r.findIndex(c => pats.some(p=>c.includes(p)));
-    const sku = find(['코드','SKU','sku']);
-    const stock = find(['마감재고','가용재고','재고수량','현재고','재고']);
-    if (sku >= 0 && stock >= 0) { hi = i; map = { sku, stock, inq: find(['입고']), outq: find(['출고']), name: find(['품목','상품명']) }; break; }
+    const find = pats => { for (const p of pats) { const j = r.findIndex(c => c.includes(p)); if (j >= 0) return j; } return -1; };
+    const sku = find(['고객사 상품코드','고객사상품코드','상품코드','품목코드','코드','SKU','sku']);
+    const stock = find(['마감재고','가용 재고','가용재고','재고수량','현재고','재고']);
+    if (sku >= 0 && stock >= 0 && sku !== stock) { hi = i; map = { sku, stock, inq: find(['입고']), outq: find(['출고']), name: find(['품목','상품명']) }; break; }
   }
   if (hi < 0) { toast('코드/재고 컬럼을 찾지 못했습니다. 파일을 클로드에게 보여주세요.'); return; }
   const data = rows.slice(hi+1).filter(r => r && String(r[map.sku]||'').trim() !== '')
