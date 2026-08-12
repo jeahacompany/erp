@@ -293,10 +293,41 @@
       <h3 style="margin:16px 0 10px;font-size:14.5px;">품목별 판매 (최근 30일)</h3>
       <div class="tbl-wrap"><div class="table-scroll" style="max-height:420px;"><table id="t-sales-sku"></table></div></div>
 
-      <h3 style="margin:22px 0 4px;font-size:15px;">🌾 산지직송(위탁) — 매입가 기준 마진</h3>
-      <p class="note" style="margin-top:2px;">우리 창고를 거치지 않는 상품입니다. 파일에 매입가가 들어있어 <b>건별 마진이 바로 계산</b>됩니다. (마진 = 상품값 + 고객배송비 − 매입가 − 공급사배송비)</p>
+      <p class="note" style="margin-top:18px;">🌾 산지직송(위탁) 상세는 <a href="#" style="color:var(--brand);font-weight:600;" onclick="showTab('sanji');return false;">산지직송 탭</a>에서 — 공급사별 실적·단가·마진을 관리합니다.</p>
+    </div>
+
+    <!-- 산지 현황 -->
+    <div id="panel-sanjiboard" class="panel">
+      <p class="note">우리 창고를 거치지 않는 위탁 상품입니다. 파일에 매입가가 들어있어 <b>건별 마진이 바로 계산</b>됩니다.<br>
+      마진 = 상품값 + 고객배송비 − 매입가 − 공급사배송비</p>
       <div class="cards" id="sanji-kpi"></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:16px;" class="board-grid">
+        <div><h3 style="margin:4px 0 10px;font-size:14.5px;">공급사별 (최근 30일)</h3>
+          <div class="tbl-wrap"><div class="table-scroll" style="max-height:340px;"><table id="t-sanji-sup"></table></div></div></div>
+        <div><h3 style="margin:4px 0 10px;font-size:14.5px;">일별 추이</h3>
+          <div class="tbl-wrap"><div class="table-scroll" style="max-height:340px;"><table id="t-sanji-day"></table></div></div></div>
+      </div>
+      <h3 style="margin:6px 0 10px;font-size:14.5px;">상품별 마진</h3>
       <div class="tbl-wrap"><div class="table-scroll" style="max-height:420px;"><table id="t-sanji"></table></div></div>
+    </div>
+
+    <!-- 산지 공급사 관리 -->
+    <div id="panel-sanjisup" class="panel">
+      <p class="note">산지 공급사를 직접 등록·관리합니다. 등록 후 <b>상품 매칭·단가</b> 탭에서 판매상품에 연결하면 공급사별 매출·마진이 집계됩니다.</p>
+      <div class="toolbar">
+        <input class="search-box" placeholder="공급사 검색" oninput="state.q.sanjiSup=this.value; renderSanjiSuppliers();">
+        <button class="btn btn-primary" onclick="openSanjiSupEdit(null)">+ 공급사 추가</button>
+      </div>
+      <div class="tbl-wrap"><div class="table-scroll"><table id="t-sanji-suppliers"></table></div></div>
+    </div>
+
+    <!-- 산지 상품 매칭·단가 -->
+    <div id="panel-sanjimatch" class="panel">
+      <p class="note">판매된 산지 상품에 <b>공급사와 공급단가</b>를 입력합니다. 행을 누르면 수정 · 단가를 바꾸면 <b>변동 이력이 자동 기록</b>됩니다.<br>
+      "실제 매입단가"는 업로드된 파일에서 계산된 값이라, 등록한 공급단가와 다르면 <span style="color:var(--red);">차이</span>가 표시됩니다.</p>
+      <div class="filters" id="sanjimatch-pills"></div>
+      <div class="toolbar"><input class="search-box" placeholder="상품명 / 옵션 검색" oninput="state.q.sanjiMatch=this.value; renderSanjiMatch();"></div>
+      <div class="tbl-wrap"><div class="table-scroll"><table id="t-sanji-match"></table></div></div>
     </div>
 
     <!-- 품목 관리 -->
@@ -385,7 +416,9 @@ const ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZ
 
 let session = JSON.parse(localStorage.getItem('doban_session') || 'null');
 const state = { rows: [], products: [], suppliers: [], users: [], pos: [], sales: null, sanji: null,
-  filter: { status:'all', reorder:'all', pos:'all', supplier:'all', match:'all' }, q: { status:'', reorder:'', products:'', match:'', supplier:'' },
+  sanjiSuppliers: [], sanjiProducts: [],
+  filter: { status:'all', reorder:'all', pos:'all', supplier:'all', match:'all', sanjiMatch:'all' },
+  q: { status:'', reorder:'', products:'', match:'', supplier:'', sanjiSup:'', sanjiMatch:'' },
   sort: {}, tab: 'board', sub: {} };
 
 async function api(fn, args) {
@@ -448,6 +481,11 @@ const NAV = [
       { id:'pos',     name:'발주 이력·입고', cnt: () => state.pos.filter(p=>p.overdue).length } ] },
   { id:'profit', ico:'📈', title:'매출·손익', subs:[
       { id:'sales', name:'매출 분석' } ] },
+  { id:'sanji', ico:'🌾', title:'산지직송',
+    cnt: () => state.sanji?.unassigned || 0, subs:[
+      { id:'sanjiboard', name:'산지 현황' },
+      { id:'sanjisup',   name:'공급사 관리' },
+      { id:'sanjimatch', name:'상품 매칭·단가', cnt: () => state.sanji?.unassigned || 0 } ] },
   { id:'partner', ico:'🤝', title:'매입처',
     cnt: () => state.suppliers.filter(s=>s.active!==false && !supComplete(s)).length, subs:[
       { id:'supplier', name:'매입처 목록' },
@@ -497,7 +535,7 @@ function showTab(id) {
   const sub = nav.subs.find(s=>s.id===panelId);
   document.getElementById('page-title').textContent = nav.title;
   renderNav(); renderSubTabs();
-  if ((panelId === 'sales' || panelId === 'upload') && !state.sales) loadSales();
+  if (['sales','upload','sanjiboard','sanjisup','sanjimatch'].includes(panelId) && !state.sales) loadSales();
   if (panelId === 'board') { if (!state.sales) { loadSales().then(renderBoard); } else { renderBoard(); } }
   if (panelId === 'logs') loadLogs();
 }
@@ -1710,11 +1748,138 @@ async function submitInvoiceSales() {
 
 async function loadSales() {
   try {
-    const [sd, sj] = await Promise.all([
+    const [sd, sj, ss, sp] = await Promise.all([
       api('getSalesDashboard', [session.token, '30']),
-      api('getSanjiDashboard', [session.token, '30']) ]);
-    state.sales = sd; state.sanji = sj;
-    renderSales(); renderSanji(); renderNav(); renderSubTabs();
+      api('getSanjiDashboard', [session.token, '30']),
+      api('getSanjiSuppliers', [session.token]),
+      api('getSanjiProducts', [session.token, '30']) ]);
+    state.sales = sd; state.sanji = sj; state.sanjiSuppliers = ss; state.sanjiProducts = sp;
+    renderSales(); renderSanji(); renderSanjiSuppliers(); renderSanjiMatch(); renderNav(); renderSubTabs();
+  } catch(e) { toast(e.message); }
+}
+
+// ---------- 산지 공급사 ----------
+function renderSanjiSuppliers() {
+  const box = document.getElementById('t-sanji-suppliers'); if (!box) return;
+  let rows = state.sanjiSuppliers;
+  const q = (state.q.sanjiSup||'').toLowerCase();
+  if (q) rows = rows.filter(s => (s.name+(s.contact||'')).toLowerCase().includes(q));
+  box.innerHTML =
+    `<thead><tr><th>#</th><th>공급사</th><th class="num">연결 상품</th><th class="num">30일 매출</th><th class="num">30일 마진</th><th class="num">마진율</th><th>발주방법</th><th>정산조건</th><th>연락처</th></tr></thead><tbody>` +
+    (rows.length ? rows.map((s,i) => {
+      const pct = s.amount30 > 0 ? Math.round(s.margin30 / s.amount30 * 1000)/10 : null;
+      return `<tr onclick="openSanjiSupEdit(${s.id})" style="cursor:pointer;">
+        <td style="color:var(--sub);">${i+1}</td>
+        <td><b>${esc(s.name)}</b>${s.active===false?' <span class="badge" style="background:var(--gray-bg);color:var(--gray);">중지</span>':''}</td>
+        <td class="num">${s.productCount||0}</td>
+        <td class="num">${fmt(Math.round(s.amount30||0))}원</td>
+        <td class="num" style="color:${(s.margin30||0)>=0?'var(--green)':'var(--red)'};font-weight:650;">${fmt(Math.round(s.margin30||0))}원</td>
+        <td class="num">${pct!=null?pct+'%':'-'}</td>
+        <td>${esc(s.orderMethod||'')||'<span style="color:var(--sub);">-</span>'}</td>
+        <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(s.paymentTerms||'')||'<span style="color:var(--sub);">-</span>'}</td>
+        <td>${esc(s.contact||'')||'<span style="color:var(--sub);">-</span>'}</td></tr>`; }).join('')
+    : '<tr><td colspan="9" style="text-align:center;color:var(--sub);padding:26px;">등록된 공급사가 없습니다. "+ 공급사 추가"로 시작하세요.</td></tr>') + '</tbody>';
+}
+function openSanjiSupEdit(id) {
+  const s = id ? state.sanjiSuppliers.find(x=>x.id===id) : {};
+  openModal(`<h2>${id?'공급사 수정':'산지 공급사 추가'}</h2>
+    <div class="sub">등록 후 "상품 매칭·단가" 탭에서 판매상품을 이 공급사에 연결하세요.</div>
+    <div class="form-grid">
+      <div><label>공급사 이름 *</label><input id="ss-name" value="${esc(s.name||'')}"></div>
+      <div><label>담당자 / 연락처</label><input id="ss-contact" value="${esc(s.contact||'')}"></div>
+      <div><label>발주 방법</label><input id="ss-method" value="${esc(s.orderMethod||'')}" placeholder="카톡, 전화, 이메일..."></div>
+      <div><label>배송비 정책</label><input id="ss-ship" value="${esc(s.shipPolicy||'')}" placeholder="예: 3,000원 / 5만원 이상 무료"></div>
+      <div class="full"><label>정산 조건</label><input id="ss-pay" value="${esc(s.paymentTerms||'')}" placeholder="예: 매월 말 정산 / 익월 10일 지급"></div>
+      <div class="full"><label>특이사항</label><input id="ss-notes" value="${esc(s.notes||'')}"></div>
+      ${id?`<div><label>상태</label><select id="ss-active"><option value="true" ${s.active!==false?'selected':''}>거래중</option><option value="false" ${s.active===false?'selected':''}>거래중지</option></select></div>`:''}
+    </div>
+    <div class="m-actions"><button class="btn" onclick="closeModal()">취소</button>
+    <button class="btn btn-primary" onclick="saveSanjiSup(${id||'null'})">저장</button></div>`);
+}
+async function saveSanjiSup(id) {
+  const name = document.getElementById('ss-name').value.trim();
+  if (!name) { toast('공급사 이름을 입력하세요'); return; }
+  try {
+    const info = { name, contact: document.getElementById('ss-contact').value,
+      orderMethod: document.getElementById('ss-method').value,
+      shipPolicy: document.getElementById('ss-ship').value,
+      paymentTerms: document.getElementById('ss-pay').value,
+      notes: document.getElementById('ss-notes').value };
+    const act = document.getElementById('ss-active'); if (act) info.active = act.value === 'true';
+    await api('saveSanjiSupplier', [session.token, id ? String(id) : '', info]);
+    closeModal(); toast('저장됐습니다'); loadSales();
+  } catch(e) { toast(e.message); }
+}
+
+// ---------- 산지 상품 매칭·단가 ----------
+function renderSanjiMatch() {
+  const box = document.getElementById('t-sanji-match'); if (!box) return;
+  const all = state.sanjiProducts;
+  const none = all.filter(p=>!p.supplierId).length;
+  const noPrice = all.filter(p=>p.supplierId && p.unitCost==null).length;
+  const pills = [['all','전체 '+all.length],['none','⚠ 공급사 미입력 '+none],['noprice','단가 미입력 '+noPrice],['done','✅ 완료 '+(all.length-none-noPrice)]];
+  const pbox = document.getElementById('sanjimatch-pills');
+  if (pbox) pbox.innerHTML = pills.map(([k,label]) =>
+    `<div class="pill ${state.filter.sanjiMatch===k?'active':''}" onclick="state.filter.sanjiMatch='${k}';renderSanjiMatch()">${label}</div>`).join('');
+  let rows = state.filter.sanjiMatch==='none' ? all.filter(p=>!p.supplierId)
+    : state.filter.sanjiMatch==='noprice' ? all.filter(p=>p.supplierId && p.unitCost==null)
+    : state.filter.sanjiMatch==='done' ? all.filter(p=>p.supplierId && p.unitCost!=null) : all;
+  const q = (state.q.sanjiMatch||'').toLowerCase();
+  if (q) rows = rows.filter(r => ((r.pname||'')+(r.popt||'')).toLowerCase().includes(q));
+  rows = [...rows].sort((a,b)=>(a.supplierId?1:0)-(b.supplierId?1:0) || (b.amount||0)-(a.amount||0));
+  box.innerHTML =
+    `<thead><tr><th>상품</th><th>옵션</th><th>공급사</th><th class="num">등록 단가</th><th class="num">실제 매입단가</th><th class="num">30일 수량</th><th class="num">30일 매출</th><th class="num">마진</th><th class="num">마진율</th></tr></thead><tbody>` +
+    (rows.length ? rows.map(r => {
+      const diff = (r.unitCost!=null && r.actualUnitCost!=null) ? Math.round(r.actualUnitCost - r.unitCost) : null;
+      return `<tr onclick="openSanjiMatchEdit('${encodeURIComponent(r.pname)}','${encodeURIComponent(r.popt)}')" style="cursor:pointer;">
+        <td>${esc(r.pname)}</td>
+        <td style="font-size:12px;color:var(--sub);max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(r.popt)}</td>
+        <td>${r.supplierName?esc(r.supplierName):'<span style="color:var(--red);font-size:12px;font-weight:600;">미입력</span>'}</td>
+        <td class="num">${r.unitCost!=null?fmt(r.unitCost)+'원':'<span style="color:var(--sub);">-</span>'}</td>
+        <td class="num">${r.actualUnitCost!=null?fmt(r.actualUnitCost)+'원':'-'}${diff!=null&&Math.abs(diff)>0?`<div class="name-sub" style="color:var(--red);">차이 ${diff>0?'+':''}${fmt(diff)}</div>`:''}</td>
+        <td class="num">${fmt(Math.round(r.qty||0))}</td>
+        <td class="num">${fmt(Math.round(r.amount||0))}원</td>
+        <td class="num" style="color:${(r.margin||0)>=0?'var(--green)':'var(--red)'};font-weight:650;">${fmt(Math.round(r.margin||0))}원</td>
+        <td class="num">${r.marginPct!=null?r.marginPct+'%':'-'}</td></tr>`; }).join('')
+    : '<tr><td colspan="9" style="text-align:center;color:var(--sub);padding:26px;">해당하는 상품이 없습니다.</td></tr>') + '</tbody>';
+}
+async function openSanjiMatchEdit(pnameEnc, poptEnc) {
+  const pname = decodeURIComponent(pnameEnc), popt = decodeURIComponent(poptEnc);
+  const r = state.sanjiProducts.find(x=>x.pname===pname && x.popt===popt); if (!r) return;
+  const opts = `<option value="">— 미입력 —</option>` +
+    state.sanjiSuppliers.filter(s=>s.active!==false).map(s=>`<option value="${s.id}" ${r.supplierId==s.id?'selected':''}>${esc(s.name)}</option>`).join('');
+  openModal(`<h2>${esc(pname)}</h2>
+    <div class="sub">${esc(popt)||'(옵션 없음)'} · 30일 판매 ${fmt(Math.round(r.qty||0))}개 · 매출 ${fmt(Math.round(r.amount||0))}원</div>
+    <div class="form-grid">
+      <div><label>공급사</label><select id="sm-sup">${opts}</select></div>
+      <div><label>공급단가 (1개당)</label><input id="sm-cost" type="number" value="${r.unitCost??''}" placeholder="계약 단가"></div>
+      <div class="full"><label>단가 변경 사유 (선택)</label><input id="sm-note" placeholder="예: 8월부터 인상"></div>
+      <div class="full"><label>메모</label><input id="sm-memo" value="${esc(r.memo||'')}"></div>
+    </div>
+    ${r.actualUnitCost!=null?`<p class="note" style="margin-top:0;">참고: 업로드된 파일 기준 <b>실제 매입단가는 ${fmt(r.actualUnitCost)}원</b>입니다.</p>`:''}
+    <div class="m-actions">
+      <button class="btn" onclick="closeModal()">취소</button>
+      <button class="btn btn-primary" onclick="saveSanjiMatch('${pnameEnc}','${poptEnc}')">저장</button></div>
+    <div id="sm-hist" style="margin-top:14px;"></div>`);
+  try {
+    const h = await api('getSanjiPriceHistory', [session.token, pname, popt]);
+    const box = document.getElementById('sm-hist'); if (!box) return;
+    box.innerHTML = h.length ? `<label style="font-size:11.5px;color:var(--sub);">단가 변경 이력</label>
+      <div class="tbl-wrap" style="margin-top:6px;"><div class="table-scroll" style="max-height:180px;"><table>
+      <thead><tr><th>일시</th><th class="num">이전</th><th class="num">변경</th><th>사유</th><th>작업자</th></tr></thead><tbody>` +
+      h.map(x=>`<tr><td>${x.at}</td><td class="num">${fmt(x.oldCost)}</td><td class="num"><b>${fmt(x.newCost)}</b></td>
+        <td style="font-size:12px;color:var(--sub);">${esc(x.note||'')}</td><td>${esc(x.username||'')}</td></tr>`).join('') +
+      '</tbody></table></div></div>' : '<p class="note" style="margin:0;">단가 변경 이력이 없습니다.</p>';
+  } catch(e) {}
+}
+async function saveSanjiMatch(pnameEnc, poptEnc) {
+  try {
+    await api('saveSanjiProduct', [session.token, decodeURIComponent(pnameEnc), decodeURIComponent(poptEnc), {
+      supplierId: document.getElementById('sm-sup').value,
+      unitCost: document.getElementById('sm-cost').value,
+      note: document.getElementById('sm-note').value,
+      memo: document.getElementById('sm-memo').value }]);
+    closeModal(); toast('저장됐습니다'); loadSales();
   } catch(e) { toast(e.message); }
 }
 
@@ -1728,8 +1893,25 @@ function renderSanji() {
     { label:'산지 매출 (상품값)', value: fmt(Math.round(t.amount||0))+'원', foot: fmt(Math.round(t.qty||0))+'개 판매' },
     { label:'매입가 합계', value: fmt(Math.round(t.cost||0))+'원', foot:'공급사 배송비 '+fmt(Math.round(t.supShip||0))+'원 별도' },
     { label:'마진', value: fmt(Math.round(t.margin||0))+'원', foot: pct!=null?('마진율 '+pct+'%'):'', cls:(t.margin||0)>=0?'v-green':'v-red' },
-    { label:'고객 배송비 수입', value: fmt(Math.round(t.shipFee||0))+'원', foot:'마진에 포함됨' },
-  ].map(k=>`<div class="card" style="cursor:default;"><div class="label">${k.label}</div><div class="value ${k.cls||''}" style="font-size:18px;">${k.value}</div><div class="foot">${k.foot}</div></div>`).join('');
+    { label:'공급사 미입력', value: (s.unassigned||0)+'건', foot: s.unassigned>0?'상품 매칭 탭에서 지정':'모두 지정됨 ✓', cls: s.unassigned>0?'v-red':'v-green' },
+  ].map(k=>`<div class="card" style="cursor:${k.label.includes('미입력')?'pointer':'default'};" ${k.label.includes('미입력')?`onclick="showTab('sanjimatch')"`:''}><div class="label">${k.label}</div><div class="value ${k.cls||''}" style="font-size:18px;">${k.value}</div><div class="foot">${k.foot}</div></div>`).join('');
+
+  const supBox = document.getElementById('t-sanji-sup');
+  if (supBox) supBox.innerHTML =
+    `<thead><tr><th>공급사</th><th class="num">수량</th><th class="num">매출</th><th class="num">마진</th><th class="num">마진율</th></tr></thead><tbody>` +
+    ((s.bySupplier||[]).length ? s.bySupplier.map(r=>`<tr><td>${r.supplier==='미입력'?'<span style="color:var(--red);font-weight:600;">미입력</span>':'<b>'+esc(r.supplier)+'</b>'}</td>
+      <td class="num">${fmt(Math.round(r.qty))}</td><td class="num">${fmt(Math.round(r.amount))}원</td>
+      <td class="num" style="color:${r.margin>=0?'var(--green)':'var(--red)'};">${fmt(Math.round(r.margin))}원</td>
+      <td class="num">${r.marginPct!=null?r.marginPct+'%':'-'}</td></tr>`).join('')
+    : '<tr><td colspan="5" style="text-align:center;color:var(--sub);padding:22px;">자료 없음</td></tr>') + '</tbody>';
+
+  const dayBox = document.getElementById('t-sanji-day');
+  if (dayBox) dayBox.innerHTML =
+    `<thead><tr><th>날짜</th><th class="num">수량</th><th class="num">매출</th><th class="num">마진</th></tr></thead><tbody>` +
+    ((s.byDay||[]).length ? s.byDay.map(d=>`<tr><td>${dateCell(d.date)}</td><td class="num">${fmt(Math.round(d.qty))}</td>
+      <td class="num">${fmt(Math.round(d.amount))}원</td>
+      <td class="num" style="color:${d.margin>=0?'var(--green)':'var(--red)'};">${fmt(Math.round(d.margin))}원</td></tr>`).join('')
+    : '<tr><td colspan="4" style="text-align:center;color:var(--sub);padding:22px;">자료 없음</td></tr>') + '</tbody>';
 
   document.getElementById('t-sanji').innerHTML =
     `<thead><tr><th>상품</th><th>옵션</th><th class="num">수량</th><th class="num">매출</th><th class="num">매입가</th><th class="num">마진</th><th class="num">마진율</th></tr></thead><tbody>` +
