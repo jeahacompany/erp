@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>업로드 설명서 — 도반글로벌 통합관리</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css">
+<style>
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:Pretendard,-apple-system,"Malgun Gothic",sans-serif; background:#F4F5F7; color:#1B1D22; font-size:15px; line-height:1.7; }
+  .wrap { max-width:760px; margin:0 auto; padding:32px 20px 80px; }
+  h1 { font-size:24px; color:#F26522; margin:0 0 4px; }
+  .sub { color:#8A8F98; font-size:14px; margin-bottom:28px; }
+  .card { background:#fff; border:1px solid #E9EAEE; border-radius:14px; padding:22px 24px; margin-bottom:18px; }
+  h2 { font-size:17px; margin:0 0 12px; display:flex; align-items:center; gap:8px; }
+  .step { display:flex; gap:12px; margin-bottom:14px; }
+  .step:last-child { margin-bottom:0; }
+  .num { flex-shrink:0; width:26px; height:26px; border-radius:50%; background:#F26522; color:#fff; font-weight:700; font-size:13px; display:flex; align-items:center; justify-content:center; margin-top:2px; }
+  .step b { color:#F26522; }
+  .warn { background:#FFF3E0; border:1px solid #FFD8A8; border-radius:10px; padding:12px 16px; font-size:13.5px; color:#8A4B00; margin-top:12px; }
+  .ok { background:#EBFBEE; border:1px solid #B2F2BB; border-radius:10px; padding:12px 16px; font-size:13.5px; color:#2B8A3E; margin-top:12px; }
+  .kbd { background:#F1F3F5; border-radius:6px; padding:1px 8px; font-size:13px; font-weight:600; color:#495057; white-space:nowrap; }
+  a { color:#1971C2; }
+  .toc { font-size:14px; }
+  .toc a { display:block; padding:4px 0; text-decoration:none; }
+  ul { margin:6px 0; padding-left:20px; }
+  @media print { body { background:#fff; } .card { border:1px solid #ddd; break-inside:avoid; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>📦 매일 업로드 설명서</h1>
+  <div class="sub">도반글로벌 통합관리 시스템 · 하루 5분이면 끝납니다</div>
+
+  <div class="card toc">
+    <h2>🔗 접속</h2>
+    주소: <a href="https://jeahacompany.github.io/erp/doban/">https://jeahacompany.github.io/erp/doban/</a><br>
+    아이디/비밀번호는 관리자에게 받으세요. 첫 로그인 후 오른쪽 위 <span class="kbd">비밀번호</span> 버튼으로 꼭 바꾸세요.<br>
+    폰에서도 똑같이 열립니다 (즐겨찾기 추천).
+  </div>
+
+  <div class="card">
+    <h2>📅 매일 할 일 (순서대로)</h2>
+    <div class="step"><div class="num">1</div><div>
+      <b>매출(송장) 파일 올리기</b><br>
+      왼쪽 메뉴 <span class="kbd">🧾 매출 업로드</span> → 왼쪽 큰 칸에 발주프로그램에서 받은 엑셀을 끌어다 놓기 →
+      "송장 파일 감지"가 뜨면 <b>출고(발송) 날짜</b>를 확인하고 <span class="kbd">이 날짜로 반영</span> 클릭
+    </div></div>
+    <div class="step"><div class="num">2</div><div>
+      <b>테무 파일 올리기 (있는 날만)</b><br>
+      같은 화면의 <b>보라색 칸(테무·그립 전용)</b>에 테무 엑셀을 끌어다 놓기<br>
+      ⭐ 같은 날짜에 1차·2차·3차 파일이 여러 개면 <b>반드시 한꺼번에 전부 선택</b>해서 올리세요 (Ctrl 누르고 여러 개 클릭)
+    </div></div>
+    <div class="step"><div class="num">3</div><div>
+      <b>물류 파일 올리기 (출고·입고·시작재고)</b><br>
+      왼쪽 메뉴 <span class="kbd">📤 마감 업로드</span> → 물류에서 받은 엑셀을 끌어다 놓기 →
+      미리보기 표에서 숫자 확인 → <b>기준일자를 그 파일의 날짜로</b> (예: "8월7일 출고,입고" 파일이면 8월 7일) → <span class="kbd">DB에 반영</span>
+    </div></div>
+    <div class="step"><div class="num">4</div><div>
+      <b>"상품 연결 필요"가 뜨면</b><br>
+      새로 팔기 시작한 상품이라는 뜻입니다. 어떤 우리 품목인지 알면 SKU를 검색해서 연결하고
+      ("2팩"이면 수량배수 2), <b>모르겠으면 그냥 두고 관리자에게 말하세요</b> — 나중에 연결해도 판매 기록은 자동으로 따라 들어갑니다.
+    </div></div>
+    <div class="warn">⚠ 순서 지키기: <b>매출·테무 먼저 → 물류 파일은 마지막.</b> 물류 파일이 그날의 최종 확정이에요.</div>
+    <div class="ok">✅ 같은 파일을 실수로 두 번 올려도 괜찮습니다 (덮어쓰기라 중복 안 생김). 빠뜨린 날짜를 나중에 올려도 그 자리에 채워집니다.</div>
+  </div>
+
+  <div class="card">
+    <h2>🧠 올리고 나서 확인하는 습관</h2>
+    <ul>
+      <li><span class="kbd">📊 한눈에 보기</span>에서 "오늘의 브리핑" 읽기 — 발주할 것, 품절 위험을 시스템이 알려줍니다</li>
+      <li>화면 위 "마감반영" 날짜가 오늘(또는 올린 날짜)로 바뀌었는지 확인</li>
+      <li>숫자가 이상해 보이면 (재고가 마이너스, 매출이 0 등) 그대로 두고 <b>바로 관리자에게 캡처해서 전달</b> — 억지로 다시 올리지 마세요</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h2>❓ 자주 묻는 것</h2>
+    <b>Q. 날짜를 잘못 선택해서 올렸어요</b><br>
+    → 같은 파일을 <b>맞는 날짜로 다시</b> 올리고, 관리자에게 잘못 올린 날짜를 알려주세요.<br><br>
+    <b>Q. "미등록 SKU"라고 떠요 (마감 업로드)</b><br>
+    → 물류에 새 상품이 생긴 것. 관리자에게 알려주면 품목 등록 후 다시 올리면 됩니다.<br><br>
+    <b>Q. 재고가 마이너스로 보여요</b><br>
+    → 입고 기록이 아직 안 들어온 것일 수 있어요. 그날 물류 파일을 올리면 대부분 자동으로 맞춰집니다. 그래도 마이너스면 관리자에게.<br><br>
+    <b>Q. 개인정보(고객 주소·전화)도 올라가나요?</b><br>
+    → 아니요. 파일 속 개인정보는 서버로 전송되지 않고, 날짜·상품·수량·금액 집계만 저장됩니다.
+  </div>
+
+  <div class="card">
+    <h2>🚫 하지 말 것</h2>
+    <ul>
+      <li>엑셀 파일을 열어서 <b>내용을 고친 뒤 올리지 마세요</b> — 받은 원본 그대로</li>
+      <li>모르는 상품을 <b>대충 아무거나로 연결하지 마세요</b> — 모르면 비워두고 물어보기</li>
+      <li>내 아이디/비밀번호를 다른 직원과 공유하지 마세요 — 누가 뭘 올렸는지 기록됩니다</li>
+    </ul>
+  </div>
+
+  <div class="sub" style="text-align:center;">문의: 관리자(대표) · 이 설명서는 시스템이 바뀌면 자동으로 최신 내용이 됩니다</div>
+</div>
+</body>
+</html>
