@@ -297,11 +297,19 @@
       <p class="note">발주 프로그램(통합)에서 내려받은 주문 엑셀을 올리면 판매처별로 분리·집계됩니다.
       개인정보(이름·연락처·주소)는 <b>이 브라우저 안에서 집계 후 버려지고 서버로 전송되지 않습니다.</b>
       같은 날짜·판매처를 다시 올리면 덮어쓰기라 중복 걱정 없습니다. 여러 파일을 연달아 올려도 됩니다.</p>
-      <div class="drop" id="sales-drop" onclick="document.getElementById('sales-file-in').click()" style="padding:22px;">
-        <div style="font-size:24px;">🧾</div>
-        <div style="font-size:14px;font-weight:600;margin-top:4px;">주문 엑셀을 끌어다 놓거나 클릭해서 선택</div>
-        <div style="font-size:12px;color:var(--sub);margin-top:4px;">지원: 발주프로그램 주문 · 송장(출고) 파일 · 테무 원본 — 자동 인식 (그립 원본은 샘플 주시면 추가)</div>
-        <input type="file" id="sales-file-in" accept=".xlsx" style="display:none;" onchange="handleSalesFile(this.files[0])">
+      <div style="display:grid;grid-template-columns:1.2fr 1fr;gap:12px;" class="board-grid">
+        <div class="drop" id="sales-drop" onclick="document.getElementById('sales-file-in').click()" style="padding:20px;">
+          <div style="font-size:24px;">🧾</div>
+          <div style="font-size:14px;font-weight:600;margin-top:4px;">매출(송장) 엑셀 — 끌어다 놓거나 클릭</div>
+          <div style="font-size:12px;color:var(--sub);margin-top:4px;">발주프로그램 주문 · 송장(출고) 파일 자동 인식</div>
+          <input type="file" id="sales-file-in" accept=".xlsx" style="display:none;" onchange="handleSalesFile(this.files[0])">
+        </div>
+        <div class="drop" id="temu-drop" onclick="document.getElementById('temu-file-in').click()" style="padding:20px;border-color:#7048E8;background:#F3F0FF;">
+          <div style="font-size:24px;">🛒</div>
+          <div style="font-size:14px;font-weight:600;margin-top:4px;">테무 · 그립 전용</div>
+          <div style="font-size:12px;color:var(--sub);margin-top:4px;">같은 날짜 차수 파일(1차·2차·3차...)을 <b>한꺼번에 모두 선택</b>하세요<br>(그립 원본은 샘플 파일 주시면 지원 추가)</div>
+          <input type="file" id="temu-file-in" accept=".xlsx" multiple style="display:none;" onchange="handleTemuFiles(this.files)">
+        </div>
       </div>
       <div id="sales-upload-status"></div>
       <div id="sales-unmatched-box"></div>
@@ -1437,6 +1445,61 @@ function handleSalesFile(file) {
     } catch(err) { st.innerHTML = `<div class="alert">❌ ${esc(err.message)}</div>`; }
   };
   reader.readAsArrayBuffer(file);
+}
+
+['dragover','dragleave','drop'].forEach(ev => document.addEventListener(ev, e => {
+  if (e.target.closest && e.target.closest('#temu-drop')) { e.preventDefault();
+    if (ev==='drop') handleTemuFiles(e.dataTransfer.files); } }));
+
+function handleTemuFiles(fileList) {
+  const files = [...(fileList||[])];
+  if (!files.length) return;
+  const st = document.getElementById('sales-upload-status');
+  st.innerHTML = `<p class="note">테무 파일 ${files.length}개 읽는 중...</p>`;
+  const agg = {}; let orders = 0; let done = 0; const errs = [];
+  files.forEach(file => {
+    const reader = new FileReader();
+    reader.onload = e => {
+      try {
+        const wb = XLSX.read(new Uint8Array(e.target.result), { type:'array' });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        const raw = XLSX.utils.sheet_to_json(ws, { header:1, raw:true });
+        let hi=-1, c={};
+        for (let i=0; i<Math.min(raw.length,10); i++) {
+          const r = (raw[i]||[]).map(x=>String(x??''));
+          const f = n => r.findIndex(x=>x===n);
+          const tP=f('제품 이름'), tO=f('선택 사항'), tQ=f('발송할 수량');
+          if (tP>=0 && tO>=0 && tQ>=0) { hi=i; c={pname:tP,popt:tO,qty:tQ,amt:f('상품 기본 가격'),status:f('주문 상태')}; break; }
+        }
+        if (hi<0) throw new Error(`${file.name}: 테무 양식이 아닙니다 (그립이면 샘플로 등록 필요)`);
+        for (let i=hi+1; i<raw.length; i++) {
+          const r = raw[i]; if (!r) continue;
+          const pname = String(r[c.pname]??'').trim(); if (!pname) continue;
+          if (c.status>=0 && String(r[c.status]??'').includes('취소')) continue;
+          const q = Number(String(r[c.qty]??'').replace(/,/g,'')) || 0; if (q<=0) continue;
+          const price = Number(String(r[c.amt]??'').replace(/[,원\s]/g,'')) || 0;
+          const popt = String(r[c.popt]??'').trim();
+          const key = ['집먹-테무', pname, popt].join('|');
+          if (!agg[key]) agg[key] = { date:'', channel:'집먹-테무', pname, popt, qty:0, amount:0 };
+          agg[key].qty += q; agg[key].amount += price*q; orders++;
+        }
+      } catch(err) { errs.push(err.message); }
+      done++;
+      if (done === files.length) {
+        if (errs.length) { st.innerHTML = `<div class="alert">❌ ${esc(errs.join(' / '))}</div>`; return; }
+        const rows = Object.values(agg);
+        if (!rows.length) { st.innerHTML = `<div class="alert">❌ 집계할 주문이 없습니다</div>`; return; }
+        window._pendingSales = { rows, orders };
+        const today = new Date(); today.setMinutes(today.getMinutes()-today.getTimezoneOffset());
+        st.innerHTML = `<div class="alert" style="background:#F3F0FF;border-color:#D0BFFF;color:#5F3DC4;">
+          🛒 테무 ${files.length}개 파일 합산 — 주문 ${fmt(orders)}건 / ${rows.length}개 조합.
+          <b>출고(발송) 기준일</b> 확인 후 반영:
+          <input type="date" id="inv-date" value="${today.toISOString().slice(0,10)}" style="border:1px solid var(--line);border-radius:7px;padding:6px 9px;margin:0 8px;">
+          <button class="btn btn-sm btn-primary" onclick="submitInvoiceSales()">이 날짜로 반영</button></div>`;
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  });
 }
 
 async function submitInvoiceSales() {
