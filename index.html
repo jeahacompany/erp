@@ -225,8 +225,10 @@
 
     <!-- 발주 -->
     <div id="panel-reorder" class="panel">
-      <p class="note">안전재고 = MAX(7일·30일 평균출고) × 리드타임 + 행사대응분, 50개 단위 올림 · 권장발주 = 30일 커버리지 + 안전재고 − 현재고.<br>
-      리드타임 우선순위: <b>품목 직접입력 → 매입처 기본값 → 시스템 기본 7일</b>. "7일(기본)" 표시는 실측값이 없다는 뜻이니 매입처 관리에서 채워주세요.</p>
+      <p class="note">
+      <b>일평균 출고</b> = 기간 출고 ÷ 실제 영업일 수 (휴무일 제외) · <b>소진예상</b>도 영업일 기준입니다.<br>
+      <b>권장발주</b> = 일평균 × (발주주기 + 리드타임) + 안전재고 − 현재고 − 발주중 수량. 발주주기 옆 <b>*</b>는 실제 입고 간격에서 자동 측정된 값, 리드타임 옆 <b>~</b>는 시스템 기본값(매입처 관리에서 실제 값을 넣으면 정확해집니다).<br>
+      <b>"평소 1회 입고"</b>와 비교해서 권장량이 훨씬 크면 <span style="color:var(--red);">평소 발주량으로는 다음 입고까지 못 버틴다</span>는 뜻입니다.</p>
       <div class="filters" id="reorder-pills"></div>
       <div class="toolbar">
         <input class="search-box" placeholder="품목명 / 코드 검색" oninput="state.q.reorder=this.value; renderReorder();">
@@ -562,6 +564,12 @@ function buildInsights() {
   overdue.slice(0,2).forEach(p => out.push({ lv:'warn', icon:'🚚',
     text:`<b>${esc(p.supplier)}</b> 발주(#${p.id})가 입고예정일(${p.expectedDate})을 지났는데 안 들어왔습니다. 매입처에 확인 연락이 필요해요.`,
     act:{ label:'발주 이력 보기', fn:`showTab('pos')` } }));
+  // 3-2) 평소 발주량으로는 부족한 품목 (구조적 재고부족)
+  const chronic = rows.filter(r => r.avgInQty && r.inCount >= 2 && r.avg7 > 0
+      && r.avgInQty < r.avg7 * r.cycleDays * 0.75)
+    .sort((a,b)=>(b.avg7*b.cycleDays - b.avgInQty)-(a.avg7*a.cycleDays - a.avgInQty)).slice(0,2);
+  chronic.forEach(r => out.push({ lv:'warn', icon:'📉',
+    text:`<b>${esc(r.name)}</b> — 평소 <b>${r.cycleDays}일마다 ${fmt(r.avgInQty)}개</b>씩 들어오는데, 그 사이 <b>${fmt(Math.round(r.avg7*r.cycleDays))}개</b>가 나갑니다. 이대로면 계속 아슬아슬해요 — 1회 발주량을 늘리거나 주기를 줄이는 게 좋습니다.` }));
   // 4) 돈 묶인 과다재고
   const over = rows.filter(r=>r.status==='과다재고').sort((a,b)=>b.stockValue-a.stockValue)[0];
   if (over && over.stockValue > 1000000) out.push({ lv:'warn', icon:'💸',
@@ -803,15 +811,20 @@ function renderReorder() {
   rows = applySort(rows, 'reorder', 'recommendedOrder', -1);
   const pom = poSkuMap();
   document.getElementById('t-reorder').innerHTML =
-    `<thead><tr>${th2('코드','stdCode','reorder')}${th2('품목','name','reorder')}${th2('매입처','supplierName','reorder')}${th2('현재고','stock','reorder',1)}${th2('7일평균','avg7','reorder',1)}${th2('30일평균','avg30','reorder',1)}<th class="num">리드타임</th>${th2('안전재고','safety','reorder',1)}${th2('권장발주','recommendedOrder','reorder',1)}${th2('소진예상','daysLeft','reorder',1)}<th>상태</th></tr></thead><tbody>` +
-    rows.map(r => `<tr onclick="openDetail('${r.sku}')" style="cursor:pointer;">
+    `<thead><tr>${th2('코드','stdCode','reorder')}${th2('품목','name','reorder')}${th2('매입처','supplierName','reorder')}${th2('현재고','stock','reorder',1)}${th2('일평균 출고','avg7','reorder',1)}${th2('소진예상','daysLeft','reorder',1)}<th class="num">커버 기준</th>${th2('안전재고','safety','reorder',1)}${th2('권장발주','recommendedOrder','reorder',1)}<th class="num">평소 1회 입고</th><th>상태</th></tr></thead><tbody>` +
+    rows.map(r => {
+      const short = r.avgInQty && r.recommendedOrder > 0 && r.avgInQty < r.recommendedOrder * 0.6;
+      return `<tr onclick="openDetail('${r.sku}')" style="cursor:pointer;">
       <td>${codeCell(r)}</td><td>${nameCell(r)}</td>
       <td>${r.supplierName?esc(r.supplierName):'<span style="color:var(--red);font-size:12px;">미지정</span>'}</td>
-      <td class="num">${fmt(r.stock)}</td><td class="num">${fmt(r.avg7)}</td><td class="num">${fmt(r.avg30)}</td>
-      <td class="num">${r.leadTimeDays}일${r.leadIsDefault?'<span style="color:var(--sub);font-size:10.5px;">(기본)</span>':''}</td>
+      <td class="num">${fmt(r.stock)}${r.onOrder>0?`<div class="name-sub" style="color:var(--blue);">+발주중 ${fmt(r.onOrder)}</div>`:''}</td>
+      <td class="num">${fmt(r.avg7)}<div class="name-sub">최대 ${fmt(r.maxDaily)}</div></td>
+      <td class="num" style="${r.daysLeft!=null&&r.daysLeft<=r.leadTimeDays?'color:var(--red);font-weight:700;':''}">${r.daysLeft==null?'-':fmt(r.daysLeft)+'일'}</td>
+      <td class="num" style="font-size:11.5px;color:var(--sub);line-height:1.35;">주기 ${r.cycleDays}${r.measuredGap?'*':''} + 리드 ${r.leadTimeDays}${r.leadIsDefault?'~':''}<br><b>= ${r.coverDays}일</b></td>
       <td class="num"><b>${fmt(r.safety)}</b>${r.safetyOverride!=null?' <span style="color:var(--blue);font-size:10.5px;">직접</span>':''}</td>
       <td class="num" style="color:${r.recommendedOrder>0?'var(--red)':'var(--sub)'};font-weight:650;">${fmt(r.recommendedOrder)}</td>
-      <td class="num">${r.daysLeft==null?'-':fmt(r.daysLeft)+'일'}</td><td>${badge(r.status)}${poBadge(r.sku, pom)}</td></tr>`).join('') + '</tbody>';
+      <td class="num" style="font-size:12px;">${r.avgInQty?fmt(r.avgInQty):'<span style="color:var(--sub);">기록없음</span>'}${short?'<div class="name-sub" style="color:var(--red);">평소론 부족</div>':''}</td>
+      <td>${badge(r.status)}${poBadge(r.sku, pom)}</td></tr>`; }).join('') + '</tbody>';
 }
 
 // ---------- 재고원가 ----------
@@ -910,7 +923,7 @@ function renderSuppliers() {
   // 미완료 먼저, 그다음 이름순
   rows = [...rows].sort((a,b) => (supComplete(a)?1:0)-(supComplete(b)?1:0) || String(a.name).localeCompare(String(b.name),'ko'));
   document.getElementById('t-supplier-list').innerHTML =
-    `<thead><tr><th>#</th><th>매입처</th><th>상태</th><th class="num">리드타임</th><th>발주방법</th><th>결제조건</th><th>담당/연락처</th><th>단톡</th><th class="num">품목수</th></tr></thead><tbody>` +
+    `<thead><tr><th>#</th><th>매입처</th><th>상태</th><th class="num">리드타임</th><th class="num">발주주기</th><th>발주방법</th><th>결제조건</th><th>담당/연락처</th><th class="num">품목수</th></tr></thead><tbody>` +
     (rows.length ? rows.map((s,i) => { const miss = supMissing(s);
       return `<tr onclick="${isMgr()?`openSupplierEdit(${s.id})`:''}" style="cursor:${isMgr()?'pointer':'default'};">
       <td style="color:var(--sub);">${i+1}</td>
@@ -919,10 +932,10 @@ function renderSuppliers() {
         ? '<span class="badge" style="background:var(--green-bg);color:var(--green);">작성완료</span>'
         : `<span class="badge" style="background:var(--orange-bg);color:var(--orange);">미완료</span> <span style="font-size:11px;color:var(--sub);">${miss.join('·')} 없음</span>`}</td>
       <td class="num">${s.leadTimeDays ? s.leadTimeDays+'일' : '<span style="color:var(--red);">-</span>'}</td>
+      <td class="num">${s.orderCycleDays ? s.orderCycleDays+'일' : '<span style="color:var(--sub);font-size:11.5px;">자동측정</span>'}</td>
       <td>${esc(s.orderMethod||'') || '<span style="color:var(--sub);">-</span>'}</td>
       <td style="max-width:230px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(s.paymentTerms||'') || '<span style="color:var(--sub);">-</span>'}</td>
       <td>${esc(s.contact||'') || '<span style="color:var(--sub);">-</span>'}</td>
-      <td>${s.chatRoom?'✅':'-'}</td>
       <td class="num">${s.productCount||0}</td></tr>`; }).join('')
     : '<tr><td colspan="9" style="text-align:center;color:var(--sub);padding:26px;">해당하는 매입처가 없습니다.</td></tr>') + '</tbody>';
 }
@@ -960,7 +973,8 @@ function openSupplierEdit(id) {
   openModal(`<h2>${id?'매입처 수정':'매입처 추가'}</h2><div class="sub">리드타임(발주→입고까지 걸리는 날짜)이 발주 계산의 핵심입니다.</div>
     <div class="form-grid">
       <div><label>매입처 이름 *</label><input id="se-name" value="${esc(s.name||'')}"></div>
-      <div><label>기본 리드타임(일)</label><input id="se-lead" type="number" value="${s.leadTimeDays??''}" placeholder="예: 5"></div>
+      <div><label>리드타임(발주→입고 며칠)</label><input id="se-lead" type="number" value="${s.leadTimeDays??''}" placeholder="비우면 기본 3일"></div>
+      <div class="full"><label>발주주기(며칠마다 발주하나) — 비우면 실제 입고 간격에서 자동 측정</label><input id="se-cycle" type="number" value="${s.orderCycleDays??''}" placeholder="예: 3 (주 2회면 3~4)"></div>
       <div><label>담당자/연락처</label><input id="se-contact" value="${esc(s.contact||'')}"></div>
       <div><label>발주 방법</label><input id="se-method" value="${esc(s.orderMethod||'')}" placeholder="카톡, 전화, 이메일..."></div>
       <div><label>단톡방</label><input id="se-chat" value="${esc(s.chatRoom||'')}"></div>
@@ -979,7 +993,8 @@ async function saveSupplier(id) {
     const info = { name, contact: document.getElementById('se-contact').value,
       orderMethod: document.getElementById('se-method').value, chatRoom: document.getElementById('se-chat').value,
       address: document.getElementById('se-addr').value, paymentTerms: document.getElementById('se-pay').value,
-      leadTimeDays: document.getElementById('se-lead').value, notes: document.getElementById('se-notes').value };
+      leadTimeDays: document.getElementById('se-lead').value, orderCycleDays: document.getElementById('se-cycle').value,
+      notes: document.getElementById('se-notes').value };
     const act = document.getElementById('se-active'); if (act) info.active = act.value === 'true';
     await api('saveSupplier', [session.token, id ? String(id) : '', info]);
     closeModal(); toast('저장됐습니다'); loadAll();
@@ -1016,6 +1031,7 @@ function openProductEdit(sku) {
       <div><label>개당 원가</label><input id="pe-cost" type="number" value="${p.cost??''}"></div>
       <div><label>판매가</label><input id="pe-price" type="number" value="${p.salePrice??''}"></div>
       <div><label>품목 리드타임(일)</label><input id="pe-lead" type="number" value="${p.leadTimeDays??''}" placeholder="비우면 매입처 기본값"></div>
+      <div><label>발주 단위(박스 입수)</label><input id="pe-unit" type="number" value="${p.orderUnit??''}" placeholder="예: 20 (20개 단위로 발주)"></div>
       <div><label>직접 안전재고</label><input id="pe-safe" type="number" value="${p.safetyOverride??''}" placeholder="비우면 자동계산"></div>
       <div><label>매입처</label><select id="pe-sup">${supOpts}</select></div>
       <div><label>대표품목 그룹 (같은 상품 묶기)</label><select id="pe-group" onchange="if(this.value==='__new'){const n=prompt('새 그룹 이름 (예: 수입산 소곱창 160g)');if(n){window._newGroupName=n;const o=document.createElement('option');o.value='__new';o.textContent='➕ '+n;this.querySelector('option[value=__new]').remove();this.appendChild(o);this.value='__new';}else{this.value='${p.groupId||''}';}}">
@@ -1043,6 +1059,7 @@ async function saveProduct(sku) {
       cost: document.getElementById('pe-cost').value || '0',
       salePrice: document.getElementById('pe-price').value,
       leadTimeDays: document.getElementById('pe-lead').value,
+      orderUnit: document.getElementById('pe-unit').value,
       safetyOverride: document.getElementById('pe-safe').value,
       active: document.getElementById('pe-active').value === 'true',
       memo: document.getElementById('pe-memo').value }]);
