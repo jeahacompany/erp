@@ -292,6 +292,11 @@
       </div>
       <h3 style="margin:16px 0 10px;font-size:14.5px;">품목별 판매 (최근 30일)</h3>
       <div class="tbl-wrap"><div class="table-scroll" style="max-height:420px;"><table id="t-sales-sku"></table></div></div>
+
+      <h3 style="margin:22px 0 4px;font-size:15px;">🌾 산지직송(위탁) — 매입가 기준 마진</h3>
+      <p class="note" style="margin-top:2px;">우리 창고를 거치지 않는 상품입니다. 파일에 매입가가 들어있어 <b>건별 마진이 바로 계산</b>됩니다. (마진 = 상품값 + 고객배송비 − 매입가 − 공급사배송비)</p>
+      <div class="cards" id="sanji-kpi"></div>
+      <div class="tbl-wrap"><div class="table-scroll" style="max-height:420px;"><table id="t-sanji"></table></div></div>
     </div>
 
     <!-- 품목 관리 -->
@@ -309,7 +314,7 @@
         <div style="flex:1;"></div>
         <a href="guide.html" target="_blank" class="btn btn-sm">📖 설명서</a>
       </div>
-      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:10px 0 4px;" class="board-grid">
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:10px 0 4px;" class="board-grid">
         <div class="drop" id="sales-drop" onclick="document.getElementById('sales-file-in').click()" style="padding:20px;margin:0;">
           <div style="font-size:13px;font-weight:700;color:var(--brand);">STEP 1</div>
           <div style="font-size:24px;margin-top:2px;">🧾</div>
@@ -324,8 +329,15 @@
           <div style="font-size:11.5px;color:var(--sub);margin-top:6px;line-height:1.5;">📌 <b>"0811 테무 1차 발주.xlsx"</b><br>차수 파일은 <b>한꺼번에 선택</b><br><b style="color:var(--red);">규칙 위반 시 업로드 안 됨</b></div>
           <input type="file" id="temu-file-in" accept=".xlsx" multiple style="display:none;" onchange="handleTemuFiles(this.files)">
         </div>
+        <div class="drop" id="sanji-drop" onclick="document.getElementById('sanji-file-in').click()" style="padding:20px;margin:0;border-color:#E8590C;background:#FFF4E6;">
+          <div style="font-size:13px;font-weight:700;color:#E8590C;">STEP 3</div>
+          <div style="font-size:24px;margin-top:2px;">🌾</div>
+          <div style="font-size:14px;font-weight:600;margin-top:4px;">산지직송 (위탁)</div>
+          <div style="font-size:11.5px;color:var(--sub);margin-top:6px;line-height:1.5;">📌 <b>"...8월 11일 매출 산지.xlsx"</b><br>매입가 포함 → <b>마진 자동계산</b><br><b style="color:var(--red);">규칙 위반 시 업로드 안 됨</b></div>
+          <input type="file" id="sanji-file-in" accept=".xlsx" multiple style="display:none;" onchange="handleSanjiFiles(this.files)">
+        </div>
         <div class="drop" id="drop" onclick="document.getElementById('file-in').click()" style="padding:20px;margin:0;border-color:#2F9E44;background:#EBFBEE;">
-          <div style="font-size:13px;font-weight:700;color:#2F9E44;">STEP 3</div>
+          <div style="font-size:13px;font-weight:700;color:#2F9E44;">STEP 4</div>
           <div style="font-size:24px;margin-top:2px;">📤</div>
           <div style="font-size:14px;font-weight:600;margin-top:4px;">물류 (출고·입고·재고)</div>
           <div style="font-size:11.5px;color:var(--sub);margin-top:6px;line-height:1.5;">📌 <b>"...8월11일 출고,입고..."</b><br>그날의 <b>최종 확정</b> — 마지막에<br><b style="color:var(--red);">규칙 위반 시 업로드 안 됨</b></div>
@@ -372,7 +384,7 @@ const API_URL = 'https://zcjvriedzememkiltqfa.supabase.co/rest/v1/rpc/erp_api';
 const ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpjanZyaWVkemVtZW1raWx0cWZhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQwMjg2MTIsImV4cCI6MjA5OTYwNDYxMn0.2nZh82xFUNORqcKObAHUnz8K5EjjL-Nym0T4YkDHxMk';
 
 let session = JSON.parse(localStorage.getItem('erp_session') || 'null');
-const state = { rows: [], products: [], suppliers: [], users: [], pos: [], sales: null,
+const state = { rows: [], products: [], suppliers: [], users: [], pos: [], sales: null, sanji: null,
   filter: { status:'all', reorder:'all', pos:'all', supplier:'all', match:'all' }, q: { status:'', reorder:'', products:'', match:'', supplier:'' },
   sort: {}, tab: 'board', sub: {} };
 
@@ -1606,6 +1618,79 @@ function handleTemuFiles(fileList) {
   });
 }
 
+// ---------- 산지직송(위탁) 업로드 ----------
+['dragover','dragleave','drop'].forEach(ev => document.addEventListener(ev, e => {
+  if (e.target.closest && e.target.closest('#sanji-drop')) { e.preventDefault();
+    if (ev==='drop') handleSanjiFiles(e.dataTransfer.files); } }));
+
+function handleSanjiFiles(fileList) {
+  const files = [...(fileList||[])];
+  if (!files.length) return;
+  const st = document.getElementById('sales-upload-status');
+  const bad = files.filter(f => !f.name.includes('산지') || !parseNameDate(f.name));
+  if (bad.length) {
+    st.innerHTML = `<div class="alert">❌ <b>파일명 규칙 위반 — 업로드되지 않았습니다.</b><br>
+      산지 파일은 <b>"...8월 11일 매출 산지.xlsx"</b> 처럼 <b>날짜 + "산지"</b>가 파일명에 있어야 합니다.<br>
+      문제 파일: ${esc(bad.map(f=>f.name).join(', '))}</div>`;
+    return;
+  }
+  st.innerHTML = `<p class="note">산지 파일 ${files.length}개 읽는 중...</p>`;
+  let done = 0, totalRows = 0, totalOrders = 0; const errs = []; const perFile = [];
+  files.forEach(file => {
+    const d = parseNameDate(file.name);
+    const reader = new FileReader();
+    reader.onload = async e => {
+      try {
+        const wb = XLSX.read(new Uint8Array(e.target.result), { type:'array' });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        const raw = XLSX.utils.sheet_to_json(ws, { header:1, raw:true });
+        let hi = -1, c = {};
+        for (let i=0; i<Math.min(raw.length,10); i++) {
+          const r = (raw[i]||[]).map(x=>String(x??''));
+          const f = n => r.findIndex(x=>x===n);
+          const pn = f('상품명'), cost = f('매입가');
+          if (pn>=0 && cost>=0) { hi=i; c={ pname:pn, popt:f('고객선택옵션'), qty:f('주문수량'),
+            amt:f('결제금액'), ship:f('배송비합계'), cost, supship:f('공급사배송비'), ch:f('판매사') }; break; }
+        }
+        if (hi<0) throw new Error(`${file.name}: 산지 양식이 아닙니다 (매입가 컬럼 없음)`);
+        const num = v => { const s = String(v??'').replace(/[,원\s]/g,''); const n = Number(s); return isFinite(n)?n:0; };
+        const agg = {}; let orders = 0;
+        for (let i=hi+1; i<raw.length; i++) {
+          const r = raw[i]; if (!r) continue;
+          const pname = String(r[c.pname]??'').trim(); if (!pname) continue;
+          const popt = c.popt>=0 ? String(r[c.popt]??'').trim() : '';
+          const ch = c.ch>=0 ? String(r[c.ch]??'').trim() : '';
+          let q = num(r[c.qty]); if (q <= 0) q = 1;
+          const key = [ch, pname, popt].join('|');
+          if (!agg[key]) agg[key] = { date:d, channel:ch, pname, popt, qty:0, amount:0, shipFee:0, cost:0, supShip:0 };
+          agg[key].qty += q;
+          agg[key].amount += num(r[c.amt]);
+          agg[key].shipFee += (c.ship>=0 ? num(r[c.ship]) : 0);
+          agg[key].cost += num(r[c.cost]);
+          agg[key].supShip += (c.supship>=0 ? num(r[c.supship]) : 0);
+          orders++;
+        }
+        const rows = Object.values(agg);
+        if (rows.length) {
+          const res = await api('uploadSanji', [session.token, rows]);
+          totalRows += res.saved; totalOrders += orders;
+          perFile.push(`${d} ${res.saved}건`);
+        }
+      } catch(err) { errs.push(err.message); }
+      done++;
+      if (done === files.length) {
+        st.innerHTML = errs.length
+          ? `<div class="alert">❌ ${esc(errs.join(' / '))}</div>`
+          : `<div class="alert" style="background:var(--orange-bg);border-color:#FFD8A8;color:#8A4B00;">
+              ✅ 산지 반영 완료 — 주문 ${fmt(totalOrders)}건 / ${fmt(totalRows)}개 조합 (${esc(perFile.join(', '))})<br>
+              <span style="font-size:12.5px;">산지는 재고 관리 대상이 아니며, 매입가 기준 마진이 매출·손익 탭에 바로 반영됩니다.</span></div>`;
+        state.sanji = null; loadSales();
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  });
+}
+
 async function submitInvoiceSales() {
   const p = window._pendingSales; if (!p) return;
   const d = document.getElementById('inv-date').value;
@@ -1625,9 +1710,36 @@ async function submitInvoiceSales() {
 
 async function loadSales() {
   try {
-    state.sales = await api('getSalesDashboard', [session.token, '30']);
-    renderSales(); renderNav(); renderSubTabs();
+    const [sd, sj] = await Promise.all([
+      api('getSalesDashboard', [session.token, '30']),
+      api('getSanjiDashboard', [session.token, '30']) ]);
+    state.sales = sd; state.sanji = sj;
+    renderSales(); renderSanji(); renderNav(); renderSubTabs();
   } catch(e) { toast(e.message); }
+}
+
+function renderSanji() {
+  const s = state.sanji; if (!s) return;
+  const t = s.total || {};
+  const pct = t.amount > 0 ? Math.round(t.margin / t.amount * 1000)/10 : null;
+  const box = document.getElementById('sanji-kpi');
+  if (!box) return;
+  box.innerHTML = [
+    { label:'산지 매출 (상품값)', value: fmt(Math.round(t.amount||0))+'원', foot: fmt(Math.round(t.qty||0))+'개 판매' },
+    { label:'매입가 합계', value: fmt(Math.round(t.cost||0))+'원', foot:'공급사 배송비 '+fmt(Math.round(t.supShip||0))+'원 별도' },
+    { label:'마진', value: fmt(Math.round(t.margin||0))+'원', foot: pct!=null?('마진율 '+pct+'%'):'', cls:(t.margin||0)>=0?'v-green':'v-red' },
+    { label:'고객 배송비 수입', value: fmt(Math.round(t.shipFee||0))+'원', foot:'마진에 포함됨' },
+  ].map(k=>`<div class="card" style="cursor:default;"><div class="label">${k.label}</div><div class="value ${k.cls||''}" style="font-size:18px;">${k.value}</div><div class="foot">${k.foot}</div></div>`).join('');
+
+  document.getElementById('t-sanji').innerHTML =
+    `<thead><tr><th>상품</th><th>옵션</th><th class="num">수량</th><th class="num">매출</th><th class="num">매입가</th><th class="num">마진</th><th class="num">마진율</th></tr></thead><tbody>` +
+    ((s.byProduct||[]).length ? s.byProduct.map(r=>`<tr>
+      <td>${esc(r.pname)}</td><td style="font-size:12px;color:var(--sub);">${esc(r.popt)}</td>
+      <td class="num">${fmt(Math.round(r.qty))}</td><td class="num">${fmt(Math.round(r.amount))}원</td>
+      <td class="num">${fmt(Math.round(r.cost))}원</td>
+      <td class="num" style="color:${r.margin>=0?'var(--green)':'var(--red)'};font-weight:650;">${fmt(Math.round(r.margin))}원</td>
+      <td class="num">${r.marginPct!=null?r.marginPct+'%':'-'}</td></tr>`).join('')
+    : '<tr><td colspan="7" style="text-align:center;color:var(--sub);padding:24px;">산지 매출 자료가 없습니다. 업로드 탭 STEP 3에 올려주세요.</td></tr>') + '</tbody>';
 }
 function renderSales() {
   const s = state.sales; if (!s) return;
@@ -1636,12 +1748,12 @@ function renderSales() {
     ? `<div class="alert">🔗 연결 안 된 판매 상품이 <b>${s.unmatched.length}개</b> 있습니다 — <a href="#" style="color:var(--brand);font-weight:600;" onclick="showTab('upload');return false;">업로드 탭에서 연결</a>하면 집계에 포함됩니다.</div>` : '';
   const totQty = s.byChannel.reduce((a,c)=>a+(c.qty||0),0);
   const totAmt = s.byChannel.reduce((a,c)=>a+(c.amount||0),0);
-  const wt = s.bySku.find(r=>r.sku==='WT001');
-  const wtAmt = wt ? wt.amount : 0;
+  const sanjiAmt = state.sanji?.total?.amount || 0;
+  const sanjiMargin = state.sanji?.total?.margin || 0;
   document.getElementById('sales-kpi').innerHTML = [
-    { label:'최근 30일 매출 (상품값 기준)', value: fmt(Math.round(totAmt))+'원', foot:'배송비 제외 · 금액 없는 채널(그립 등) 미포함' },
-    { label:'자사재고 상품 매출', value: fmt(Math.round(totAmt - wtAmt))+'원', foot:'안성창고 출고 상품' },
-    { label:'위탁(산지직송) 매출', value: fmt(Math.round(wtAmt))+'원', foot:'재고 관리 대상 아님' },
+    { label:'자사재고 상품 매출', value: fmt(Math.round(totAmt))+'원', foot:'안성창고 출고 · 배송비 제외' },
+    { label:'산지직송(위탁) 매출', value: fmt(Math.round(sanjiAmt))+'원', foot:'마진 '+fmt(Math.round(sanjiMargin))+'원' },
+    { label:'합계 매출', value: fmt(Math.round(totAmt + sanjiAmt))+'원', foot:'최근 30일' },
     { label:'판매 수량 / 미매칭', value: fmt(Math.round(totQty))+'개 / '+s.unmatched.length, foot: s.unmatched.length?'아래에서 연결 필요':'모두 연결됨 ✓' },
   ].map(k=>`<div class="card" style="cursor:default;"><div class="label">${k.label}</div><div class="value" style="font-size:18px;">${k.value}</div><div class="foot">${k.foot}</div></div>`).join('');
 
