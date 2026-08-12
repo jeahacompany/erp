@@ -391,7 +391,7 @@
       <div id="sales-unmatched-box"></div>
 
       <h3 style="margin:22px 0 4px;font-size:14.5px;">📅 최근 업로드 현황</h3>
-      <p class="note" style="margin-top:2px;">토·일과 공휴일은 원래 자료가 없으므로 <b>누락으로 보지 않습니다.</b> 평일인데 비어 있으면 <span style="color:var(--red);">누락</span>으로 표시되고, 그날이 실제로 휴무였다면 <b>[휴무]</b> 버튼을 눌러주세요 — 다음부터 기억합니다.</p>
+      <p class="note" style="margin-top:2px;"><b>토·일 · 공휴일 · 운영 시작 전 · 오늘(마감 전)</b>은 누락으로 보지 않습니다. 평일인데 비어 있으면 <span style="color:var(--red);">누락</span>으로 표시되고, 그날이 실제로 쉰 날이면 <b>[이 날 휴무였음]</b>을 눌러주세요 — 다음부터 기억합니다.</p>
       <div id="upload-status-box"></div>
     </div>
 
@@ -1741,17 +1741,19 @@ function renderUploadStatus() {
     partial: ['#FFF4E6','#E8590C','일부'],
     missing: ['#FDEDF0','#D6455D','누락'],
     weekend: ['#F1F3F5','#868E96','주말'],
-    holiday: ['#F1F3F5','#868E96','휴무'],
+    holiday: ['#FFF9DB','#997A00','공휴일'],
+    before:  ['#F8F9FA','#ADB5BD','운영 전'],
+    today:   ['#E7F0FA','#1971C2','오늘 대기'],
   };
-  const alertHtml = (u.missingCount > 0 || u.partialCount > 0)
-    ? `<div class="alert" style="margin-bottom:10px;">⚠ 최근 3주 중 <b>평일인데 자료가 없는 날 ${u.missingCount}일</b>${u.partialCount>0?`, 일부만 올라온 날 ${u.partialCount}일`:''} 있습니다. 아래에서 확인하세요.</div>`
-    : `<div class="alert" style="background:var(--green-bg);border-color:#B2F2BB;color:var(--green);margin-bottom:10px;">✅ 최근 3주 평일 자료가 모두 채워져 있습니다.</div>`;
+  const alertHtml = (u.missingCount > 0)
+    ? `<div class="alert" style="margin-bottom:10px;">⚠ 평일인데 자료가 없는 날이 <b>${u.missingCount}일</b> 있습니다${u.partialCount>0?`, 일부만 올라온 날 ${u.partialCount}일`:''}. 아래에서 확인하세요.</div>`
+    : `<div class="alert" style="background:var(--green-bg);border-color:#B2F2BB;color:var(--green);margin-bottom:10px;">✅ 빠진 날 없습니다 — 운영 시작(${u.startDate}) 이후 평일 자료가 모두 채워져 있습니다. <span style="font-size:12.5px;">주말·공휴일은 자동으로 제외됩니다.</span></div>`;
   box.innerHTML = alertHtml +
     `<div class="tbl-wrap"><div class="table-scroll" style="max-height:420px;"><table>
       <thead><tr><th>날짜</th><th>상태</th><th>매출</th><th>테무·산지</th><th>물류</th><th></th></tr></thead><tbody>` +
     u.days.map(d => {
       const st = STY[d.status] || ['#fff','#555',d.status];
-      const isOff = d.status==='weekend' || d.status==='holiday';
+      const isOff = ['weekend','holiday','before','today'].includes(d.status);
       return `<tr style="${d.status==='missing'?'background:#FFF8F9;':''}">
         <td>${dateCell(d.date)}</td>
         <td><span class="badge" style="background:${st[0]};color:${st[1]};">${st[2]}</span>${d.holiday?` <span style="font-size:11px;color:var(--sub);">${esc(d.holiday)}</span>`:''}</td>
