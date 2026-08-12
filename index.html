@@ -299,7 +299,8 @@
       같은 날짜·판매처를 다시 올리면 덮어쓰기라 중복 걱정 없습니다. 여러 파일을 연달아 올려도 됩니다.</p>
       <div class="drop" id="sales-drop" onclick="document.getElementById('sales-file-in').click()" style="padding:22px;">
         <div style="font-size:24px;">🧾</div>
-        <div style="font-size:14px;font-weight:600;margin-top:4px;">주문 엑셀을 끌어다 놓거나 클릭해서 선택 (집에서먹자_*.xlsx)</div>
+        <div style="font-size:14px;font-weight:600;margin-top:4px;">주문 엑셀을 끌어다 놓거나 클릭해서 선택</div>
+        <div style="font-size:12px;color:var(--sub);margin-top:4px;">지원: 발주프로그램 주문 · 송장(출고) 파일 · 테무 원본 — 자동 인식 (그립 원본은 샘플 주시면 추가)</div>
         <input type="file" id="sales-file-in" accept=".xlsx" style="display:none;" onchange="handleSalesFile(this.files[0])">
       </div>
       <div id="sales-upload-status"></div>
@@ -1358,11 +1359,17 @@ function handleSalesFile(file) {
       const wb = XLSX.read(new Uint8Array(e.target.result), { type:'array' });
       const ws = wb.Sheets[wb.SheetNames[0]];
       const raw = XLSX.utils.sheet_to_json(ws, { header:1, raw:true });
-      // 헤더 탐색 (두 가지 양식 지원: 발주프로그램 주문 / 송장(출고) 파일)
-      let hi = -1, c = {}, invoiceMode = false;
+      // 헤더 탐색 (세 가지 양식: 발주프로그램 주문 / 송장(출고) / 테무 원본)
+      let hi = -1, c = {}, invoiceMode = false, temuMode = false;
       for (let i=0; i<Math.min(raw.length,10); i++) {
         const r = (raw[i]||[]).map(x=>String(x??''));
         const f = name => r.findIndex(x=>x===name);
+        // 테무 원본 양식
+        const tPname = f('제품 이름'), tPopt = f('선택 사항'), tQty = f('발송할 수량');
+        if (tPname>=0 && tPopt>=0 && tQty>=0) {
+          hi=i; temuMode = true; invoiceMode = true;
+          c={pname:tPname, popt:tPopt, qty:tQty, amt:f('상품 기본 가격'), status:f('주문 상태')}; break;
+        }
         const qty = f('주문수량'), ch = f('판매사');
         if (qty>=0 && ch>=0) {
           const pnameA = f('판매사상품명'), poptA = f('판매사옵션명');
@@ -1380,6 +1387,17 @@ function handleSalesFile(file) {
       let orders = 0;
       for (let i=hi+1; i<raw.length; i++) {
         const r = raw[i]; if (!r) continue;
+        if (temuMode) {
+          const pname = String(r[c.pname]??'').trim(); if (!pname) continue;
+          if (c.status>=0 && String(r[c.status]??'').includes('취소')) continue;
+          const q = Number(String(r[c.qty]??'').replace(/,/g,'')) || 0; if (q<=0) continue;
+          const price = Number(String(r[c.amt]??'').replace(/[,원\s]/g,'')) || 0;
+          const popt = String(r[c.popt]??'').trim();
+          const key = ['집먹-테무', pname, popt].join('|');
+          if (!agg[key]) agg[key] = { date:'', channel:'집먹-테무', pname, popt, qty:0, amount:0 };
+          agg[key].qty += q; agg[key].amount += price*q; orders++;
+          continue;
+        }
         const chv = String(r[c.ch]??'').trim(); if (!chv) continue;
         let d = '';
         if (!invoiceMode) {
@@ -1401,7 +1419,7 @@ function handleSalesFile(file) {
         window._pendingSales = { rows, orders };
         const today = new Date(); today.setMinutes(today.getMinutes()-today.getTimezoneOffset());
         st.innerHTML = `<div class="alert" style="background:var(--brand-soft);border-color:#FFD8A8;color:#8A4B00;">
-          🧾 송장(출고) 파일 감지 — 주문 ${fmt(orders)}건 / ${rows.length}개 조합.
+          ${temuMode?'🛒 테무 원본 파일 감지 (채널: 집먹-테무)':'🧾 송장(출고) 파일 감지'} — 주문 ${fmt(orders)}건 / ${rows.length}개 조합.
           <b>출고(발송) 기준일</b>을 확인하고 반영하세요:
           <input type="date" id="inv-date" value="${today.toISOString().slice(0,10)}" style="border:1px solid var(--line);border-radius:7px;padding:6px 9px;margin:0 8px;">
           <button class="btn btn-sm btn-primary" onclick="submitInvoiceSales()">이 날짜로 반영</button></div>`;
