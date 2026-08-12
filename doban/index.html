@@ -62,6 +62,11 @@
   .v-red { color:var(--red); } .v-orange { color:var(--orange); } .v-green { color:var(--green); }
 
   .panel { display:none; } .panel.active { display:block; }
+  .subtabs { display:flex; gap:4px; border-bottom:1px solid var(--line); margin-bottom:16px; overflow-x:auto; }
+  .subtab { padding:9px 15px; font-size:13.5px; color:#6B7280; cursor:pointer; border-bottom:2px solid transparent; white-space:nowrap; font-weight:500; }
+  .subtab:hover { color:var(--txt); }
+  .subtab.active { color:var(--brand); font-weight:700; border-bottom-color:var(--brand); }
+  .cnt2 { background:var(--red); color:#fff; border-radius:99px; font-size:10.5px; padding:1px 6px; margin-left:3px; vertical-align:1px; }
   .filters { display:flex; gap:7px; margin-bottom:13px; flex-wrap:wrap; }
   .pill { border:1px solid var(--line); background:#fff; border-radius:999px; padding:6px 14px; font-size:12.5px; cursor:pointer; color:#555; }
   .pill.active { background:var(--txt); color:#fff; border-color:var(--txt); }
@@ -172,6 +177,8 @@
         <button class="btn btn-sm btn-primary" onclick="loadAll()">새로고침</button>
       </div>
     </div>
+
+    <div id="subtabs" class="subtabs"></div>
 
     <div class="alert" id="top-alert" style="display:none;"></div>
 
@@ -292,42 +299,41 @@
       <div class="tbl-wrap"><div class="table-scroll"><table id="t-products"></table></div></div>
     </div>
 
-    <!-- 매출 업로드 -->
-    <div id="panel-salesup" class="panel">
-      <p class="note">발주 프로그램(통합)에서 내려받은 주문 엑셀을 올리면 판매처별로 분리·집계됩니다.
-      개인정보(이름·연락처·주소)는 <b>이 브라우저 안에서 집계 후 버려지고 서버로 전송되지 않습니다.</b>
-      같은 날짜·판매처를 다시 올리면 덮어쓰기라 중복 걱정 없습니다. 여러 파일을 연달아 올려도 됩니다.</p>
-      <div style="display:grid;grid-template-columns:1.2fr 1fr;gap:12px;" class="board-grid">
-        <div class="drop" id="sales-drop" onclick="document.getElementById('sales-file-in').click()" style="padding:20px;">
-          <div style="font-size:24px;">🧾</div>
-          <div style="font-size:14px;font-weight:600;margin-top:4px;">매출(송장) 엑셀 — 끌어다 놓거나 클릭</div>
-          <div style="font-size:12px;color:var(--sub);margin-top:6px;">📌 파일명 규칙: <b>"...8월 11일 매출.xlsx"</b> (날짜+"매출" 필수)<br>
-          <b style="color:var(--red);">규칙에 안 맞으면 업로드되지 않습니다</b> · 날짜는 파일명에서 자동 인식</div>
+    <!-- 업로드 (3칸 한 화면) -->
+    <div id="panel-upload" class="panel">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px;flex-wrap:wrap;">
+        <b style="font-size:14.5px;">오늘 올릴 파일</b>
+        <span class="note" style="margin:0;">①매출 → ②테무 → ③물류 순서로 올리세요. 파일명에서 날짜를 자동으로 읽습니다.</span>
+        <div style="flex:1;"></div>
+        <a href="guide.html" target="_blank" class="btn btn-sm">📖 설명서</a>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:10px 0 4px;" class="board-grid">
+        <div class="drop" id="sales-drop" onclick="document.getElementById('sales-file-in').click()" style="padding:20px;margin:0;">
+          <div style="font-size:13px;font-weight:700;color:var(--brand);">STEP 1</div>
+          <div style="font-size:24px;margin-top:2px;">🧾</div>
+          <div style="font-size:14px;font-weight:600;margin-top:4px;">매출(송장)</div>
+          <div style="font-size:11.5px;color:var(--sub);margin-top:6px;line-height:1.5;">📌 <b>"...8월 11일 매출.xlsx"</b><br>날짜+"매출" 필수<br><b style="color:var(--red);">규칙 위반 시 업로드 안 됨</b></div>
           <input type="file" id="sales-file-in" accept=".xlsx" style="display:none;" onchange="handleSalesFile(this.files[0])">
         </div>
-        <div class="drop" id="temu-drop" onclick="document.getElementById('temu-file-in').click()" style="padding:20px;border-color:#7048E8;background:#F3F0FF;">
-          <div style="font-size:24px;">🛒</div>
-          <div style="font-size:14px;font-weight:600;margin-top:4px;">테무 · 그립 전용</div>
-          <div style="font-size:12px;color:var(--sub);margin-top:6px;">📌 파일명 규칙: <b>"0811 테무 1차 발주.xlsx"</b> (날짜+"테무" 필수)<br>
-          같은 날짜 차수 파일은 <b>한꺼번에 모두 선택</b> · <b style="color:var(--red);">규칙에 안 맞으면 업로드되지 않습니다</b></div>
+        <div class="drop" id="temu-drop" onclick="document.getElementById('temu-file-in').click()" style="padding:20px;margin:0;border-color:#7048E8;background:#F3F0FF;">
+          <div style="font-size:13px;font-weight:700;color:#7048E8;">STEP 2</div>
+          <div style="font-size:24px;margin-top:2px;">🛒</div>
+          <div style="font-size:14px;font-weight:600;margin-top:4px;">테무 · 그립</div>
+          <div style="font-size:11.5px;color:var(--sub);margin-top:6px;line-height:1.5;">📌 <b>"0811 테무 1차 발주.xlsx"</b><br>차수 파일은 <b>한꺼번에 선택</b><br><b style="color:var(--red);">규칙 위반 시 업로드 안 됨</b></div>
           <input type="file" id="temu-file-in" accept=".xlsx" multiple style="display:none;" onchange="handleTemuFiles(this.files)">
         </div>
+        <div class="drop" id="drop" onclick="document.getElementById('file-in').click()" style="padding:20px;margin:0;border-color:#2F9E44;background:#EBFBEE;">
+          <div style="font-size:13px;font-weight:700;color:#2F9E44;">STEP 3</div>
+          <div style="font-size:24px;margin-top:2px;">📤</div>
+          <div style="font-size:14px;font-weight:600;margin-top:4px;">물류 (출고·입고·재고)</div>
+          <div style="font-size:11.5px;color:var(--sub);margin-top:6px;line-height:1.5;">📌 <b>"...8월11일 출고,입고..."</b><br>그날의 <b>최종 확정</b> — 마지막에<br><b style="color:var(--red);">규칙 위반 시 업로드 안 됨</b></div>
+          <input type="file" id="file-in" accept=".xlsx,.xls" style="display:none;" onchange="handleFile(this.files[0])">
+        </div>
       </div>
+      <p class="note">개인정보(이름·연락처·주소)는 이 브라우저 안에서 집계 후 버려지고 서버로 전송되지 않습니다. 같은 파일을 다시 올려도 덮어쓰기라 중복이 생기지 않습니다.</p>
       <div id="sales-upload-status"></div>
-      <div id="sales-unmatched-box"></div>
-    </div>
-
-    <!-- 마감 업로드 -->
-    <div id="panel-closing" class="panel">
-      <p class="note">매일 마감 후 받는 "상품별 재고_요약본" 엑셀을 올리면 그날 입출고·마감재고가 반영됩니다.<br>평소엔 구글드라이브 <b>재고데일리\인박스</b>에 넣으면 자동 반영 — 이 화면은 수동 경로입니다.</p>
-      <div class="drop" id="drop" onclick="document.getElementById('file-in').click()">
-        <div style="font-size:30px;">📤</div>
-        <div style="font-size:14px;font-weight:600;margin-top:6px;">물류 엑셀을 끌어다 놓거나 클릭해서 선택</div>
-        <div style="font-size:12px;color:var(--sub);margin-top:6px;">📌 파일명 규칙: <b>"...8월11일 출고,입고 12일 시작재고.xlsx"</b> (날짜+"출고,입고" 필수)<br>
-        <b style="color:var(--red);">규칙에 안 맞으면 업로드되지 않습니다</b> · 기준일자는 파일명에서 자동 인식</div>
-        <input type="file" id="file-in" accept=".xlsx,.xls" style="display:none;" onchange="handleFile(this.files[0])">
-      </div>
       <div id="closing-preview"></div>
+      <div id="sales-unmatched-box"></div>
     </div>
 
     <!-- 직원 -->
@@ -366,7 +372,7 @@ const ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZ
 let session = JSON.parse(localStorage.getItem('doban_session') || 'null');
 const state = { rows: [], products: [], suppliers: [], users: [], pos: [], sales: null,
   filter: { status:'all', reorder:'all', pos:'all', supplier:'all', match:'all' }, q: { status:'', reorder:'', products:'', match:'', supplier:'' },
-  sort: {}, tab: 'board' };
+  sort: {}, tab: 'board', sub: {} };
 
 async function api(fn, args) {
   const r = await fetch(API_URL, { method:'POST',
@@ -413,48 +419,73 @@ function logout() { if (session) api('logout',[session.token]).catch(()=>{}); lo
   document.getElementById('view-app').style.display='none'; document.getElementById('view-login').style.display='flex'; }
 
 // ---------- 네비게이션 ----------
+// 7개 상위탭 — 각 탭은 하나 이상의 패널(서브탭)을 가진다
 const NAV = [
-  { label:'대시보드' },
-  { id:'board',     ico:'📊', title:'한눈에 보기' },
-  { label:'재고' },
-  { id:'status',    ico:'📊', title:'전체 현황' },
-  { id:'reorder',   ico:'🚨', title:'안전재고·발주', cnt: () => state.rows.filter(r=>['발주필요','품절'].includes(r.status)).length },
-  { id:'valuation', ico:'💰', title:'재고원가 순위' },
-  { id:'outbound',  ico:'📦', title:'출고 분석' },
-  { id:'groups',    ico:'🧬', title:'동일품목 비교' },
-  { label:'파트너' },
-  { id:'supplier',  ico:'🤝', title:'매입처 관리', cnt: () => state.suppliers.filter(s=>s.active!==false && !supComplete(s)).length },
-  { id:'match',     ico:'🔗', title:'품목 매칭', cnt: () => state.products.filter(p=>p.active!==false && !p.supplierId && p.sku!=='WT001').length },
-  { id:'pos',       ico:'🧾', title:'발주 이력', cnt: () => state.pos.filter(p=>p.overdue).length },
-  { label:'매출' },
-  { id:'sales',     ico:'📈', title:'매출 분석' },
-  { label:'업로드', up:true },
-  { id:'closing',   ico:'📤', title:'마감 업로드', up:true },
-  { id:'salesup',   ico:'🧾', title:'매출 업로드', up:true, cnt: () => (state.sales?.unmatched||[]).length },
-  { label:'관리', mgr:true },
-  { id:'products',  ico:'🏷️', title:'품목 관리', mgr:true },
-  { id:'users',     ico:'👥', title:'직원 계정', admin:true },
-  { id:'logs',      ico:'📋', title:'작업 기록', admin:true },
+  { id:'board', ico:'📊', title:'한눈에 보기', subs:[
+      { id:'board', name:'대시보드' } ] },
+  { id:'stock', ico:'📦', title:'재고', subs:[
+      { id:'status',    name:'전체 현황' },
+      { id:'valuation', name:'재고원가 순위' },
+      { id:'outbound',  name:'출고 분석' },
+      { id:'groups',    name:'동일품목 비교' } ] },
+  { id:'order', ico:'🚨', title:'발주',
+    cnt: () => state.rows.filter(r=>['발주필요','품절'].includes(r.status)).length, subs:[
+      { id:'reorder', name:'발주 추천' },
+      { id:'pos',     name:'발주 이력·입고', cnt: () => state.pos.filter(p=>p.overdue).length } ] },
+  { id:'profit', ico:'📈', title:'매출·손익', subs:[
+      { id:'sales', name:'매출 분석' } ] },
+  { id:'partner', ico:'🤝', title:'매입처',
+    cnt: () => state.suppliers.filter(s=>s.active!==false && !supComplete(s)).length, subs:[
+      { id:'supplier', name:'매입처 목록' },
+      { id:'match',    name:'품목 매칭', cnt: () => state.products.filter(p=>p.active!==false && !p.supplierId && p.sku!=='WT001').length } ] },
+  { id:'upload', ico:'⬆️', title:'업로드', up:true,
+    cnt: () => (state.sales?.unmatched||[]).length, subs:[
+      { id:'upload', name:'파일 업로드' } ] },
+  { id:'admin', ico:'⚙️', title:'관리', mgr:true, subs:[
+      { id:'products', name:'품목 관리' },
+      { id:'users',    name:'직원 계정', admin:true },
+      { id:'logs',     name:'작업 기록', admin:true } ] },
 ];
+const navVisible = n => (!n.mgr || isMgr()) && (!n.up || isUploader()) && (!n.admin || session.role==='admin');
+const subVisible = s => (!s.admin || session.role==='admin') && (!s.mgr || isMgr());
+function navOfPanel(pid) { return NAV.find(n => n.subs.some(s=>s.id===pid)); }
+
 function renderNav() {
-  document.getElementById('nav').innerHTML = NAV.filter(n =>
-    (!n.mgr || isMgr()) && (!n.up || isUploader()) && (!n.admin || session.role==='admin')
-  ).map(n => n.label !== undefined
-    ? `<div class="nav-label">${n.label}</div>`
-    : `<div class="nav-item ${state.tab===n.id?'active':''}" onclick="showTab('${n.id}')">
-        <span class="ico">${n.ico}</span>${n.title}
-        ${n.cnt && n.cnt()>0 ? `<span class="cnt">${n.cnt()}</span>`:''}</div>`).join('');
+  document.getElementById('nav').innerHTML = NAV.filter(navVisible).map(n => {
+    const c = n.cnt ? n.cnt() : 0;
+    return `<div class="nav-item ${state.tab===n.id?'active':''}" onclick="showTab('${n.id}')">
+      <span class="ico">${n.ico}</span>${n.title}
+      ${c>0 ? `<span class="cnt">${c}</span>`:''}</div>`;
+  }).join('');
+}
+function renderSubTabs() {
+  const nav = NAV.find(n=>n.id===state.tab);
+  const box = document.getElementById('subtabs');
+  if (!nav) { box.innerHTML = ''; return; }
+  const subs = nav.subs.filter(subVisible);
+  if (subs.length <= 1) { box.innerHTML = ''; box.style.display='none'; return; }
+  box.style.display = '';
+  box.innerHTML = subs.map(s => {
+    const c = s.cnt ? s.cnt() : 0;
+    return `<div class="subtab ${state.sub[nav.id]===s.id?'active':''}" onclick="showTab('${s.id}')">${s.name}${c>0?` <span class="cnt2">${c}</span>`:''}</div>`;
+  }).join('');
 }
 function showTab(id) {
-  state.tab = id;
+  let nav = NAV.find(n=>n.id===id);
+  let panelId;
+  if (nav) { panelId = state.sub[nav.id] || nav.subs.filter(subVisible)[0]?.id; }
+  else { nav = navOfPanel(id); panelId = id; }
+  if (!nav || !panelId) return;
+  state.tab = nav.id; state.sub[nav.id] = panelId;
   document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
-  document.getElementById('panel-'+id).classList.add('active');
-  const item = NAV.find(n=>n.id===id);
-  document.getElementById('page-title').textContent = item ? item.title.replace(' (준비중)','') : '';
-  renderNav();
-  if ((id === 'sales' || id === 'salesup') && !state.sales) loadSales();
-  if (id === 'board') { if (!state.sales) { loadSales().then(renderBoard); } else { renderBoard(); } }
-  if (id === 'logs') loadLogs();
+  const el = document.getElementById('panel-'+panelId);
+  if (el) el.classList.add('active');
+  const sub = nav.subs.find(s=>s.id===panelId);
+  document.getElementById('page-title').textContent = nav.title;
+  renderNav(); renderSubTabs();
+  if ((panelId === 'sales' || panelId === 'upload') && !state.sales) loadSales();
+  if (panelId === 'board') { if (!state.sales) { loadSales().then(renderBoard); } else { renderBoard(); } }
+  if (panelId === 'logs') loadLogs();
 }
 
 // ---------- 작업 기록 (admin) ----------
@@ -666,7 +697,11 @@ function enterApp() {
   document.getElementById('me-name').textContent = session.displayName;
   document.getElementById('me-role').textContent = roleName(session.role);
   document.getElementById('me-avatar').textContent = (session.displayName||'?').slice(0,1);
-  renderNav(); loadAll();
+  // 권한에 맞는 첫 탭으로 진입 (업로드 직원은 업로드 탭이 기본)
+  const first = NAV.filter(navVisible)[0];
+  state.tab = (session.role === 'uploader') ? 'upload' : (first ? first.id : 'board');
+  showTab(state.tab);
+  loadAll();
 }
 
 async function loadAll() {
@@ -677,7 +712,7 @@ async function loadAll() {
     state.rows = dash.rows; state.products = prods; state.suppliers = sups; state.pos = pos;
     document.getElementById('hd-ref').textContent = dash.refDate || '-';
     document.getElementById('hd-closing').textContent = (dash.lastClosing && dash.lastClosing !== 'null') ? String(dash.lastClosing).replace(/"/g,'') : '아직 없음';
-    renderNav(); renderKpi(); renderStatus(); renderReorder(); renderValuation(); renderOutbound(); renderGroups(); renderSuppliers(); renderMatch(); renderProducts(); renderPos();
+    renderNav(); renderSubTabs(); renderKpi(); renderStatus(); renderReorder(); renderValuation(); renderOutbound(); renderGroups(); renderSuppliers(); renderMatch(); renderProducts(); renderPos();
     if (state.tab === 'board') { if (!state.sales) { loadSales().then(renderBoard); } else { renderBoard(); } }
     if (session.role === 'admin') loadUsers();
   } catch(e) { toast('불러오기 실패: ' + e.message); }
@@ -1314,7 +1349,7 @@ async function recordAndCopyOrder(i, btn) {
     const r = await api('createPo', [session.token, b.sup, items, '발주서 생성에서 기록']);
     btn.textContent = '기록됨 ✓ (#'+r.poId+')'; btn.disabled = true;
     const pos = await api('listPos', [session.token, '90']); state.pos = pos;
-    renderPos(); renderNav(); renderStatus(); renderReorder();
+    renderPos(); renderNav(); renderSubTabs(); renderStatus(); renderReorder();
   } catch(e) { toast(e.message); }
 }
 
@@ -1363,7 +1398,7 @@ async function setPoTrashed(id, trashed) {
     await api('setPoTrashed', [session.token, String(id), trashed]);
     toast(trashed ? '휴지통으로 이동했습니다' : '복원됐습니다');
     state.pos = await api('listPos', [session.token, '90']);
-    renderPos(); renderNav(); renderStatus(); renderReorder(); closeModal();
+    renderPos(); renderNav(); renderSubTabs(); renderStatus(); renderReorder(); closeModal();
   } catch(e) { toast(e.message); }
 }
 async function deletePoForever(id) {
@@ -1381,7 +1416,7 @@ async function setPoStatus(id, status) {
     await api('setPoStatus', [session.token, String(id), status]);
     toast(status==='received' ? '입고완료 처리됐습니다. 입고 단가가 바뀌었으면 품목 관리에서 "입고 단가 기록"도 해주세요.' : '변경됐습니다');
     const pos = await api('listPos', [session.token, '90']); state.pos = pos;
-    renderPos(); renderNav(); renderStatus(); renderReorder(); closeModal();
+    renderPos(); renderNav(); renderSubTabs(); renderStatus(); renderReorder(); closeModal();
   } catch(e) { toast(e.message); }
 }
 
@@ -1574,14 +1609,14 @@ async function submitInvoiceSales() {
 async function loadSales() {
   try {
     state.sales = await api('getSalesDashboard', [session.token, '30']);
-    renderSales(); renderNav();
+    renderSales(); renderNav(); renderSubTabs();
   } catch(e) { toast(e.message); }
 }
 function renderSales() {
   const s = state.sales; if (!s) return;
   const notice = document.getElementById('sales-unmatched-notice');
   if (notice) notice.innerHTML = s.unmatched.length
-    ? `<div class="alert">🔗 연결 안 된 판매 상품이 <b>${s.unmatched.length}개</b> 있습니다 — <a href="#" style="color:var(--brand);font-weight:600;" onclick="showTab('salesup');return false;">매출 업로드 탭에서 연결</a>하면 집계에 포함됩니다.</div>` : '';
+    ? `<div class="alert">🔗 연결 안 된 판매 상품이 <b>${s.unmatched.length}개</b> 있습니다 — <a href="#" style="color:var(--brand);font-weight:600;" onclick="showTab('upload');return false;">업로드 탭에서 연결</a>하면 집계에 포함됩니다.</div>` : '';
   const totQty = s.byChannel.reduce((a,c)=>a+(c.qty||0),0);
   const totAmt = s.byChannel.reduce((a,c)=>a+(c.amount||0),0);
   const wt = s.bySku.find(r=>r.sku==='WT001');
