@@ -184,6 +184,7 @@
 
     <!-- 한눈에 보기 (시각화 보드) -->
     <div id="panel-board" class="panel active">
+      <div id="pbar-board"></div>
       <div id="board-brief" style="margin-bottom:16px;"></div>
       <div class="cards" id="board-kpi"></div>
       <div class="tbl-wrap" style="padding:16px 18px;margin-bottom:14px;">
@@ -217,6 +218,7 @@
 
     <!-- 전체 현황 -->
     <div id="panel-status" class="panel">
+      <div id="pbar-status"></div>
       <div class="cards" id="kpi-cards"></div>
       <div class="filters" id="status-pills"></div>
       <div class="toolbar"><input class="search-box" placeholder="품목명 / 코드 검색" oninput="state.q.status=this.value; renderStatus();"></div>
@@ -225,6 +227,7 @@
 
     <!-- 발주 -->
     <div id="panel-reorder" class="panel">
+      <div id="pbar-reorder"></div>
       <p class="note">
       <b>일평균 출고</b> = 기간 출고 ÷ 실제 영업일 수 (휴무일 제외) · <b>소진예상</b>도 영업일 기준입니다.<br>
       <b>권장발주</b> = 일평균 × (발주주기 + 리드타임) + 안전재고 − 현재고 − 발주중 수량. 발주주기 옆 <b>*</b>는 실제 입고 간격에서 자동 측정된 값, 리드타임 옆 <b>~</b>는 시스템 기본값(매입처 관리에서 실제 값을 넣으면 정확해집니다).<br>
@@ -282,6 +285,7 @@
 
     <!-- 매출 -->
     <div id="panel-sales" class="panel">
+      <div id="pbar-sales"></div>
       <p class="note" style="margin-top:0;"><b style="color:var(--brand);">⭐ 출고(발송)일 기준</b> · 배송비 제외 상품값 기준입니다.</p>
       <div id="sales-unmatched-notice"></div>
       <div class="cards" id="sales-kpi"></div>
@@ -518,6 +522,7 @@ const state = { rows: [], products: [], suppliers: [], users: [], pos: [], sales
   sanjiSuppliers: [], sanjiProducts: [], sanjiChanges: [], uploadStatus: null,
   pflow: null, channels: [], dailyCosts: [], health: null, healthCount: 0, requests: null,
   sanjiRange: { from: null, to: null },
+  period: { from: null, to: null }, periodPreset: '', rows0Period: null, bounds: null,
   filter: { status:'all', reorder:'all', pos:'all', supplier:'all', match:'all', sanjiMatch:'all', req:'open' },
   q: { status:'', reorder:'', products:'', match:'', supplier:'', sanjiSup:'', sanjiMatch:'' },
   sort: {}, tab: 'board', sub: {} };
@@ -1199,9 +1204,13 @@ function enterApp() {
 async function loadAll() {
   try {
     const [dash, prods, sups, pos] = await Promise.all([
-      api('getDashboard', [session.token]), api('getProducts', [session.token]),
+      api('getDashboard', [session.token, state.period.from || '', state.period.to || '']),
+      api('getProducts', [session.token]),
       api('getSuppliers', [session.token]), api('listPos', [session.token, '90']) ]);
     state.rows = dash.rows; state.products = prods; state.suppliers = sups; state.pos = pos;
+    state.rows0Period = dash.period;
+    try { state.bounds = await api('getDataBounds', [session.token]); } catch(e) {}
+    renderPeriodBars();
     document.getElementById('hd-ref').textContent = dash.refDate || '-';
     document.getElementById('hd-closing').textContent = (dash.lastClosing && dash.lastClosing !== 'null') ? String(dash.lastClosing).replace(/"/g,'') : '아직 없음';
     renderNav(); renderSubTabs(); renderKpi(); renderStatus(); renderReorder(); renderValuation(); renderOutbound(); renderGroups(); renderSuppliers(); renderMatch(); renderProducts(); renderPos();
@@ -1271,12 +1280,20 @@ function renderStatus() {
   if (q) rows = rows.filter(r => (r.name+r.sku+(r.stdCode||'')).toLowerCase().includes(q));
   rows = applySort(rows, 'status', 'stockValue', -1);
   const pom = poSkuMap();
+  // 기간을 고르면 7일/30일 평균 대신 그 기간의 일평균 한 칸으로 바꾼다 (요청 #3)
+  const cust = !!state.rows0Period?.custom;
+  const avgHead = cust
+    ? th2('기간 일평균','avgSel','status',1)
+    : th2('7일평균','avg7','status',1) + th2('30일평균','avg30','status',1);
+  const avgCell = r => cust
+    ? `<td class="num"><b>${fmt(r.avgSel)}</b><div class="name-sub">${fmt(r.outSel)}개 / ${fmt(state.rows0Period.bizDays)}일</div></td>`
+    : `<td class="num">${fmt(r.avg7)}</td><td class="num">${fmt(r.avg30)}</td>`;
   document.getElementById('t-status').innerHTML =
-    `<thead><tr>${th2('코드','stdCode','status')}${th2('품목','name','status')}${th2('재고','stock','status',1)}${th2('개당단가','cost','status',1)}${th2('재고금액','stockValue','status',1)}<th>상태</th>${th2('7일평균','avg7','status',1)}${th2('30일평균','avg30','status',1)}${th2('소진예상','daysLeft','status',1)}${th2('권장발주','recommendedOrder','status',1)}<th>최근출고</th></tr></thead><tbody>` +
+    `<thead><tr>${th2('코드','stdCode','status')}${th2('품목','name','status')}${th2('재고','stock','status',1)}${th2('개당단가','cost','status',1)}${th2('재고금액','stockValue','status',1)}<th>상태</th>${avgHead}${th2('소진예상','daysLeft','status',1)}${th2('권장발주','recommendedOrder','status',1)}<th>최근출고</th></tr></thead><tbody>` +
     rows.map(r => `<tr onclick="openDetail('${r.sku}')" style="cursor:pointer;">
       <td>${codeCell(r)}</td><td>${nameCell(r)}</td>
       <td class="num">${fmt(r.stock)}</td><td class="num">${fmt(r.cost)}원</td><td class="num">${fmt(r.stockValue)}원</td>
-      <td>${badge(r.status)}${poBadge(r.sku, pom)}</td><td class="num">${fmt(r.avg7)}</td><td class="num">${fmt(r.avg30)}</td>
+      <td>${badge(r.status)}${poBadge(r.sku, pom)}</td>${avgCell(r)}
       <td class="num">${r.daysLeft==null?'-':fmt(r.daysLeft)+'일'}</td>
       <td class="num">${r.recommendedOrder>0 ? (pom[r.sku]!==undefined ? `<span style="color:var(--sub);">${fmt(r.recommendedOrder)}</span>` : `<b style="color:var(--red);">${fmt(r.recommendedOrder)}</b> ${isMgr()?`<button class="btn btn-sm btn-primary" style="margin-left:4px;" onclick="event.stopPropagation();quickOrder('${r.sku}')">발주</button>`:''}`) : '-'}</td>
       <td>${r.lastOutDate||'-'}</td></tr>`).join('') + '</tbody>';
@@ -1295,14 +1312,14 @@ function renderReorder() {
   rows = applySort(rows, 'reorder', 'recommendedOrder', -1);
   const pom = poSkuMap();
   document.getElementById('t-reorder').innerHTML =
-    `<thead><tr>${th2('코드','stdCode','reorder')}${th2('품목','name','reorder')}${th2('매입처','supplierName','reorder')}${th2('현재고','stock','reorder',1)}${th2('일평균 출고','avg7','reorder',1)}${th2('소진예상','daysLeft','reorder',1)}<th class="num">커버 기준</th>${th2('안전재고','safety','reorder',1)}${th2('권장발주','recommendedOrder','reorder',1)}<th class="num">평소 1회 입고</th><th>상태</th></tr></thead><tbody>` +
+    `<thead><tr>${th2('코드','stdCode','reorder')}${th2('품목','name','reorder')}${th2('매입처','supplierName','reorder')}${th2('현재고','stock','reorder',1)}${state.rows0Period?.custom ? th2('기간 일평균','avgSel','reorder',1) : th2('일평균 출고','avg7','reorder',1)}${th2('소진예상','daysLeft','reorder',1)}<th class="num">커버 기준</th>${th2('안전재고','safety','reorder',1)}${th2('권장발주','recommendedOrder','reorder',1)}<th class="num">평소 1회 입고</th><th>상태</th></tr></thead><tbody>` +
     rows.map(r => {
       const short = r.avgInQty && r.recommendedOrder > 0 && r.avgInQty < r.recommendedOrder * 0.6;
       return `<tr onclick="openDetail('${r.sku}')" style="cursor:pointer;">
       <td>${codeCell(r)}</td><td>${nameCell(r)}</td>
       <td>${supplierCell(r)}</td>
       <td class="num">${fmt(r.stock)}${r.onOrder>0?`<div class="name-sub" style="color:var(--blue);">+발주중 ${fmt(r.onOrder)}</div>`:''}</td>
-      <td class="num">${fmt(r.avg7)}<div class="name-sub">최대 ${fmt(r.maxDaily)}</div></td>
+      <td class="num">${state.rows0Period?.custom ? `<b>${fmt(r.avgSel)}</b>` : fmt(r.avg7)}<div class="name-sub">최대 ${fmt(r.maxDaily)}</div></td>
       <td class="num" style="${r.daysLeft!=null&&r.daysLeft<=r.leadTimeDays?'color:var(--red);font-weight:700;':''}">${r.daysLeft==null?'-':fmt(r.daysLeft)+'일'}</td>
       <td class="num" style="font-size:11.5px;color:var(--sub);line-height:1.35;">주기 ${r.cycleDays}${r.measuredGap?'*':''} + 리드 ${r.leadTimeDays}${r.leadIsDefault?'~':''}<br><b>= ${r.coverDays}일</b></td>
       <td class="num"><b>${fmt(r.safety)}</b>${r.safetyOverride!=null?' <span style="color:var(--blue);font-size:10.5px;">직접</span>':''}</td>
@@ -2495,7 +2512,7 @@ async function submitInvoiceSales() {
 async function loadSales() {
   try {
     const [sd, sj, ss, sp] = await Promise.all([
-      api('getSalesDashboard', [session.token, '30']),
+      api('getSalesDashboard', [session.token, state.period.from || '', state.period.to || '']),
       api('getSanjiBoard', [session.token, state.sanjiRange.from || '', state.sanjiRange.to || '']),
       api('getSanjiSuppliers', [session.token]),
       api('getSanjiProducts', [session.token, '30']) ]);
@@ -2658,6 +2675,73 @@ async function saveSanjiMatch(pnameEnc, poptEnc) {
       note: document.getElementById('sm-note').value,
       memo: document.getElementById('sm-memo').value }]);
     closeModal(); toast('저장됐습니다'); loadSales();
+  } catch(e) { toast(e.message); }
+}
+
+// ---------- 공통 기간 필터 (엑셀 필터처럼 아무 화면에서나) ----------
+// 재고·발주·매출·한눈에보기가 같은 기간을 본다. 한 곳에서 바꾸면 전부 따라간다.
+// 재고 수량 자체는 늘 최신 시점이고, 기간은 "얼마나 팔리느냐"에만 영향을 준다.
+const PERIOD_BARS = ['board','status','reorder','sales'];
+function periodBounds() {
+  const p = state.rows0Period || {};
+  const b = state.bounds || {};
+  return { min: p.minDate || b.outMin || '', max: p.maxDate || b.outMax || '' };
+}
+function renderPeriodBars() {
+  const p = state.rows0Period || {};
+  const { min, max } = periodBounds();
+  const cur = state.period.from ? `${state.period.from} ~ ${state.period.to}` : null;
+  const presets = [['','기본(자동)'],['7','최근 7일'],['30','최근 30일'],['month','이번 달'],['prev','지난 달'],['all','전체']];
+  PERIOD_BARS.forEach(k => {
+    const el = document.getElementById('pbar-' + k); if (!el) return;
+    el.innerHTML = `<div class="tbl-wrap" style="padding:11px 15px;margin-bottom:13px;">
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        <b style="font-size:13px;">📅 기간</b>
+        <input type="date" id="pd-from-${k}" min="${min}" max="${max}" value="${state.period.from||''}"
+          onchange="applyPeriod('${k}')" style="border:1px solid var(--line);border-radius:8px;padding:6px 9px;font-size:13px;">
+        <span style="color:var(--sub);">~</span>
+        <input type="date" id="pd-to-${k}" min="${min}" max="${max}" value="${state.period.to||''}"
+          onchange="applyPeriod('${k}')" style="border:1px solid var(--line);border-radius:8px;padding:6px 9px;font-size:13px;">
+        ${presets.map(([v,label])=>`<div class="pill ${((v===''&&!cur)||state.periodPreset===v)?'active':''}" onclick="setPeriod('${v}')">${label}</div>`).join('')}
+      </div>
+      <div class="note" style="margin:7px 0 0;">${
+        cur ? `<b>${cur}</b> (${fmt(p.days||0)}일 · 출고 있던 날 ${fmt(p.bizDays||0)}일) 기준으로 계산 중입니다. 일평균·소진예상·권장발주가 모두 이 기간 기준입니다.`
+            : `<b>기본(자동)</b> — 최근 7일과 30일 평균 중 <b>큰 쪽</b>으로 발주를 계산합니다. 기간을 고르면 그 기간 기준으로 바뀝니다.`
+      }${min?` · 자료 있는 날짜: <b>${min} ~ ${max}</b>`:''}</div>
+    </div>`;
+  });
+}
+function applyPeriod(k) {
+  const f = document.getElementById('pd-from-'+k).value, t = document.getElementById('pd-to-'+k).value;
+  state.periodPreset = null;
+  loadPeriod(f, t);
+}
+function setPeriod(kind) {
+  const { min, max } = periodBounds();
+  state.periodPreset = kind;
+  if (kind === '') { loadPeriod('', ''); return; }
+  if (!max) return;
+  const mx = new Date(max + 'T00:00:00');
+  const iso = d => { const x = new Date(d); x.setMinutes(x.getMinutes() - x.getTimezoneOffset()); return x.toISOString().slice(0,10); };
+  let from, to = max;
+  if (kind === 'all')        { from = min; }
+  else if (kind === 'month') { from = iso(new Date(mx.getFullYear(), mx.getMonth(), 1)); }
+  else if (kind === 'prev')  { from = iso(new Date(mx.getFullYear(), mx.getMonth()-1, 1));
+                               to   = iso(new Date(mx.getFullYear(), mx.getMonth(), 0)); }
+  else { const d = new Date(mx); d.setDate(d.getDate() - (Number(kind) - 1)); from = iso(d); }
+  loadPeriod(from, to);
+}
+async function loadPeriod(from, to) {
+  state.period = { from: from || null, to: to || null };
+  try {
+    const [dash, sd] = await Promise.all([
+      api('getDashboard', [session.token, from || '', to || '']),
+      api('getSalesDashboard', [session.token, from || '', to || '']) ]);
+    state.rows = dash.rows; state.rows0Period = dash.period; state.sales = sd;
+    document.getElementById('hd-ref').textContent = dash.refDate || '-';
+    renderPeriodBars(); renderKpi(); renderStatus(); renderReorder();
+    renderValuation(); renderOutbound(); renderGroups();
+    renderSales(); renderBoard(); renderNav(); renderSubTabs();
   } catch(e) { toast(e.message); }
 }
 
