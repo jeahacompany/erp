@@ -457,6 +457,17 @@
       <div class="tbl-wrap"><div class="table-scroll" style="max-height:300px;"><table id="t-pricelog"></table></div></div>
     </div>
 
+    <!-- 요청함 -->
+    <div id="panel-requests" class="panel">
+      <p class="note">쓰다가 불편한 것, 틀려 보이는 숫자, 있었으면 하는 기능 — <b>보이는 그 자리에서</b> 남겨주세요.
+        화면 오른쪽 아래 <b>💬 요청하기</b> 버튼은 어느 화면에서든 떠 있습니다. 사진(스크린샷)도 붙일 수 있습니다.</p>
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap;">
+        <button class="btn btn-primary" onclick="openRequestModal()">💬 새 요청 쓰기</button>
+        <div id="req-pills" style="display:flex;gap:6px;flex-wrap:wrap;"></div>
+      </div>
+      <div id="requests-body"><p class="note">불러오는 중...</p></div>
+    </div>
+
     <!-- 데이터 점검 -->
     <div id="panel-health" class="panel">
       <p class="note">자료가 꼬였는지 <b>매일 자동으로</b> 훑습니다. 숫자를 못 믿게 되는 상황을 미리 잡는 게 목적이라,
@@ -480,6 +491,12 @@
 </div>
 <div class="toast" id="toast"></div>
 
+<!-- 어느 화면에서든 떠 있는 요청 버튼 -->
+<button id="req-fab" onclick="openRequestModal()" title="이 화면에 대해 요청하기"
+  style="display:none;position:fixed;right:22px;bottom:22px;z-index:60;border:none;cursor:pointer;
+         background:var(--brand,#F26522);color:#fff;font-weight:700;font-size:14px;
+         padding:13px 20px;border-radius:999px;box-shadow:0 6px 20px rgba(0,0,0,.22);">💬 요청하기</button>
+
 <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <script>
@@ -489,8 +506,8 @@ const ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZ
 let session = JSON.parse(localStorage.getItem('erp_session') || 'null');
 const state = { rows: [], products: [], suppliers: [], users: [], pos: [], sales: null, sanji: null,
   sanjiSuppliers: [], sanjiProducts: [], sanjiChanges: [], uploadStatus: null,
-  pflow: null, channels: [], dailyCosts: [], health: null, healthCount: 0,
-  filter: { status:'all', reorder:'all', pos:'all', supplier:'all', match:'all', sanjiMatch:'all' },
+  pflow: null, channels: [], dailyCosts: [], health: null, healthCount: 0, requests: null,
+  filter: { status:'all', reorder:'all', pos:'all', supplier:'all', match:'all', sanjiMatch:'all', req:'open' },
   q: { status:'', reorder:'', products:'', match:'', supplier:'', sanjiSup:'', sanjiMatch:'' },
   sort: {}, tab: 'board', sub: {} };
 
@@ -545,7 +562,8 @@ async function doLogin() {
 }
 document.getElementById('li-pw').addEventListener('keydown', e=>{ if(e.key==='Enter') doLogin(); });
 function logout() { if (session) api('logout',[session.token]).catch(()=>{}); localStorage.removeItem('erp_session'); session=null;
-  document.getElementById('view-app').style.display='none'; document.getElementById('view-login').style.display='flex'; }
+  document.getElementById('view-app').style.display='none'; document.getElementById('view-login').style.display='flex';
+  document.getElementById('req-fab').style.display='none'; }
 
 // ---------- 네비게이션 ----------
 // 7개 상위탭 — 각 탭은 하나 이상의 패널(서브탭)을 가진다
@@ -577,6 +595,9 @@ const NAV = [
   { id:'upload', ico:'⬆️', title:'업로드', up:true,
     cnt: () => (state.sales?.unmatched||[]).length, subs:[
       { id:'upload', name:'파일 업로드' } ] },
+  { id:'requests', ico:'💬', title:'요청',
+    cnt: () => (state.requests||[]).filter(r=>r.status==='요청').length, subs:[
+      { id:'requests', name:'요청 목록' } ] },
   { id:'admin', ico:'⚙️', title:'관리', mgr:true, subs:[
       { id:'products', name:'품목 관리' },
       { id:'health',   name:'데이터 점검', cnt: () => state.healthCount },
@@ -635,6 +656,152 @@ function showTab(id) {
   }
   if (panelId === 'logs') loadLogs();
   if (panelId === 'health') loadHealth();
+  if (panelId === 'requests') loadRequests();
+}
+
+// ---------- 요청함 ----------
+// 직원이 화면에서 바로 남기고, 대표가 승인하면 개발로 넘어간다.
+const REQ_STATUS = ['요청','승인','개발중','완료','보류'];
+const REQ_COLOR = { '요청':'var(--red)', '승인':'#1971C2', '개발중':'#E8590C', '완료':'var(--green)', '보류':'var(--sub)' };
+
+function currentScreenName() {
+  const nav = NAV.find(n => n.id === state.tab);
+  if (!nav) return '';
+  const sub = nav.subs.find(s => s.id === state.sub[nav.id]);
+  return nav.title + (sub && sub.name && nav.subs.length > 1 ? ' › ' + sub.name : '');
+}
+async function loadRequests(force) {
+  const box = document.getElementById('requests-body');
+  if (state.requests && !force) { renderRequests(); return; }
+  if (box) box.innerHTML = '<p class="note">불러오는 중...</p>';
+  try {
+    state.requests = await api('listRequests', [session.token, 180]);
+    renderNav(); renderSubTabs(); renderRequests();
+  } catch(e) { if (box) box.innerHTML = `<div class="alert">❌ ${esc(e.message)}</div>`; }
+}
+function renderRequests() {
+  const box = document.getElementById('requests-body');
+  const all = state.requests || []; if (!box) return;
+  const f = state.filter.req || 'open';
+  const counts = { open: all.filter(r=>r.status!=='완료').length, all: all.length };
+  REQ_STATUS.forEach(s => counts[s] = all.filter(r=>r.status===s).length);
+  const pills = [['open','진행중 '+counts.open], ['all','전체 '+counts.all],
+                 ...REQ_STATUS.map(s=>[s, s+' '+counts[s]])];
+  document.getElementById('req-pills').innerHTML = pills.map(([k,label]) =>
+    `<div class="pill ${f===k?'active':''}" onclick="state.filter.req='${k}';renderRequests()">${label}</div>`).join('');
+
+  const rows = f==='open' ? all.filter(r=>r.status!=='완료') : f==='all' ? all : all.filter(r=>r.status===f);
+  if (!rows.length) {
+    box.innerHTML = `<div class="alert" style="background:var(--green-bg);border-color:#B2F2BB;color:var(--green);">
+      ✅ ${f==='open'?'처리할 요청이 없습니다.':'해당하는 요청이 없습니다.'}</div>`;
+    return;
+  }
+  box.innerHTML = rows.map(r => {
+    const c = REQ_COLOR[r.status] || 'var(--sub)';
+    return `<div class="tbl-wrap" style="padding:14px 16px;margin-bottom:10px;border-left:4px solid ${c};">
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:7px;">
+        <span class="badge" style="background:${c};color:#fff;">${r.status}</span>
+        ${r.priority==='급함'?'<span class="badge" style="background:#FFF5F5;color:var(--red);">급함</span>':''}
+        <b style="font-size:13px;">#${r.id}</b>
+        <span class="name-sub">${esc(r.username)} · ${esc(r.at)}${r.screen?' · '+esc(r.screen):''}</span>
+        ${r.hasImage?`<button class="btn btn-sm" onclick="viewReqImage(${r.id})">🖼 사진 보기</button>`:''}
+      </div>
+      <div style="font-size:14px;line-height:1.6;white-space:pre-wrap;">${esc(r.body)}</div>
+      ${r.note?`<div class="note" style="margin:9px 0 0;padding:9px 12px;background:var(--bg,#F7F8FA);border-radius:8px;white-space:pre-wrap;"><b>처리 내용</b><br>${esc(r.note)}</div>`:''}
+      ${isMgr()?`<div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap;align-items:center;">
+        ${REQ_STATUS.filter(s=>s!==r.status).map(s=>`<button class="btn btn-sm" onclick="setReqStatus(${r.id},'${s}')">${s==='승인'?'✅ 승인':s}</button>`).join('')}
+        <button class="btn btn-sm" onclick="addReqNote(${r.id})">📝 메모</button>
+      </div>`:''}
+    </div>`;
+  }).join('');
+}
+function openRequestModal() {
+  window._reqImage = null;
+  openModal(`<h2>💬 요청하기</h2>
+    <div class="sub">고치고 싶은 것, 이상해 보이는 숫자, 있었으면 하는 기능 — 편하게 적어주세요.
+      말투는 신경쓰지 마세요. "발주서 글씨 작음" 이 정도면 알아듣습니다.</div>
+    <div class="form-grid" style="grid-template-columns:1fr;">
+      <div><label>어느 화면인가요</label>
+        <input id="rq-screen" value="${esc(currentScreenName())}" placeholder="예: 발주 › 발주 추천"></div>
+      <div><label>무엇을 고쳤으면 하나요 *</label>
+        <textarea id="rq-body" rows="5" placeholder="예) 매입처가 '미지정'인데, 여기를 클릭하면 바로 업체 이름을 등록할 수 있으면 좋겠어요."
+          style="width:100%;border:1px solid var(--line);border-radius:9px;padding:11px;font-family:inherit;font-size:14px;"></textarea></div>
+      <div><label>급한가요</label>
+        <select id="rq-priority" class="inline"><option>보통</option><option>급함</option></select></div>
+      <div><label>사진 (선택) — 캡처해서 <b>Ctrl+V</b>로 붙여넣거나 파일을 고르세요</label>
+        <input type="file" id="rq-file" accept="image/*" onchange="handleReqImage(this.files[0])">
+        <div id="rq-preview" class="note" style="margin-top:8px;">아직 없음</div></div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeModal()">취소</button>
+      <button class="btn btn-primary" onclick="submitRequest()">보내기</button>
+    </div>`);
+  setTimeout(()=>document.getElementById('rq-body')?.focus(), 60);
+}
+// 스크린샷을 그대로 붙여넣게 — 캡처 → Ctrl+V 가 가장 짧은 길이다.
+document.addEventListener('paste', e => {
+  if (!document.getElementById('rq-body')) return;
+  const it = [...(e.clipboardData?.items||[])].find(x => x.type.startsWith('image/'));
+  if (it) { handleReqImage(it.getAsFile()); e.preventDefault(); }
+});
+function handleReqImage(file) {
+  if (!file) return;
+  const pv = document.getElementById('rq-preview');
+  if (pv) pv.textContent = '사진 줄이는 중...';
+  const fr = new FileReader();
+  fr.onload = ev => {
+    const img = new Image();
+    img.onload = () => {
+      // 화면 캡처는 커서 그대로 올리면 무겁다. 글씨는 읽히면서 용량은 줄게 가로 1600으로 맞춘다.
+      const max = 1600, sc = Math.min(1, max / Math.max(img.width, img.height));
+      const cv = document.createElement('canvas');
+      cv.width = Math.round(img.width * sc); cv.height = Math.round(img.height * sc);
+      cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
+      window._reqImage = cv.toDataURL('image/jpeg', 0.72);
+      const kb = Math.round(window._reqImage.length * 0.75 / 1024);
+      if (pv) pv.innerHTML = `<img src="${window._reqImage}" style="max-width:100%;max-height:220px;border-radius:9px;border:1px solid var(--line);">
+        <div style="margin-top:5px;">${cv.width}×${cv.height} · ${kb}KB — <a href="#" onclick="window._reqImage=null;document.getElementById('rq-preview').textContent='아직 없음';return false;">사진 빼기</a></div>`;
+    };
+    img.src = ev.target.result;
+  };
+  fr.readAsDataURL(file);
+}
+async function submitRequest() {
+  const body = document.getElementById('rq-body').value.trim();
+  if (!body) { toast('내용을 적어주세요'); return; }
+  try {
+    await api('createRequest', [session.token, {
+      screen: document.getElementById('rq-screen').value.trim(),
+      body, priority: document.getElementById('rq-priority').value,
+      image: window._reqImage || '' }]);
+    window._reqImage = null; closeModal(); toast('요청을 보냈습니다');
+    state.requests = null; loadRequests(true);
+  } catch(e) { toast(e.message); }
+}
+async function setReqStatus(id, status) {
+  try { await api('setRequest', [session.token, String(id), { status }]);
+    const r = (state.requests||[]).find(x=>x.id===id); if (r) r.status = status;
+    toast(status + '(으)로 바꿨습니다'); renderNav(); renderSubTabs(); renderRequests();
+  } catch(e) { toast(e.message); }
+}
+async function addReqNote(id) {
+  const cur = (state.requests||[]).find(x=>x.id===id)?.note || '';
+  const note = prompt('처리 내용을 적어주세요 (요청자에게 보입니다)', cur);
+  if (note === null) return;
+  try { await api('setRequest', [session.token, String(id), { note }]);
+    const r = (state.requests||[]).find(x=>x.id===id); if (r) r.note = note;
+    toast('저장됨'); renderRequests();
+  } catch(e) { toast(e.message); }
+}
+async function viewReqImage(id) {
+  openModal('<h2>🖼 첨부 사진</h2><p class="note">불러오는 중...</p>');
+  try {
+    const r = await api('getRequestImage', [session.token, String(id)]);
+    openModal(`<h2>🖼 요청 #${id} 사진</h2>
+      <img src="${r.image}" style="max-width:100%;border-radius:10px;border:1px solid var(--line);">
+      <div class="modal-actions"><button class="btn" onclick="closeModal()">닫기</button></div>`);
+  } catch(e) { openModal(`<h2>🖼 사진</h2><div class="alert">❌ ${esc(e.message)}</div>
+    <div class="modal-actions"><button class="btn" onclick="closeModal()">닫기</button></div>`); }
 }
 
 // ---------- 데이터 점검 ----------
@@ -1013,6 +1180,8 @@ function enterApp() {
   const first = NAV.filter(navVisible)[0];
   state.tab = (session.role === 'uploader') ? 'upload' : (first ? first.id : 'board');
   showTab(state.tab);
+  document.getElementById('req-fab').style.display = 'block';
+  loadRequests().catch(()=>{});
   loadAll();
 }
 
@@ -1120,7 +1289,7 @@ function renderReorder() {
       const short = r.avgInQty && r.recommendedOrder > 0 && r.avgInQty < r.recommendedOrder * 0.6;
       return `<tr onclick="openDetail('${r.sku}')" style="cursor:pointer;">
       <td>${codeCell(r)}</td><td>${nameCell(r)}</td>
-      <td>${r.supplierName?esc(r.supplierName):'<span style="color:var(--red);font-size:12px;">미지정</span>'}</td>
+      <td>${supplierCell(r)}</td>
       <td class="num">${fmt(r.stock)}${r.onOrder>0?`<div class="name-sub" style="color:var(--blue);">+발주중 ${fmt(r.onOrder)}</div>`:''}</td>
       <td class="num">${fmt(r.avg7)}<div class="name-sub">최대 ${fmt(r.maxDaily)}</div></td>
       <td class="num" style="${r.daysLeft!=null&&r.daysLeft<=r.leadTimeDays?'color:var(--red);font-weight:700;':''}">${r.daysLeft==null?'-':fmt(r.daysLeft)+'일'}</td>
@@ -1270,6 +1439,55 @@ async function matchSupplier(sku, supplierId) {
     const p = state.products.find(x=>x.sku===sku); if (p) p.supplierId = supplierId ? Number(supplierId) : null;
     toast('매칭 저장됨'); renderSuppliers();
   } catch(e) { toast(e.message); }
+}
+
+// ---------- 매입처 칸: 그 자리에서 바로 지정 ----------
+// 발주 화면에서 "미지정"을 보고 매입처 탭까지 찾아가야 했던 걸, 칸을 눌러 바로 끝내게 한다.
+function supplierOptions(selectedId) {
+  return `<option value="">— 미지정 —</option>` +
+    state.suppliers.filter(x=>x.active!==false)
+      .map(x=>`<option value="${x.id}" ${String(selectedId)===String(x.id)?'selected':''}>${esc(x.name)}</option>`).join('') +
+    `<option value="__new">+ 새 매입처 만들기…</option>`;
+}
+function supplierCell(r) {
+  const label = r.supplierName ? esc(r.supplierName)
+    : '<span style="color:var(--red);font-size:12px;">미지정</span>';
+  if (!isMgr()) return label;
+  return `<span class="sup-pick" title="클릭해서 매입처 지정"
+    onclick="event.stopPropagation();openSupplierPick('${r.sku}',this)"
+    style="cursor:pointer;border-bottom:1px dashed var(--line);">${label} <span style="font-size:10px;color:var(--sub);">✎</span></span>`;
+}
+function openSupplierPick(sku, el) {
+  const p = state.products.find(x=>x.sku===sku);
+  el.outerHTML = `<select class="inline" autofocus onclick="event.stopPropagation()"
+    onchange="pickSupplier('${sku}', this.value, this)">${supplierOptions(p?.supplierId)}</select>`;
+}
+async function pickSupplier(sku, value, sel) {
+  if (value === '__new') {
+    const name = prompt('새 매입처 이름을 적어주세요');
+    if (!name || !name.trim()) { renderReorder(); return; }
+    try {
+      const saved = await api('saveSupplier', [session.token, '', { name: name.trim() }]);
+      state.suppliers = await api('getSuppliers', [session.token]);
+      const found = state.suppliers.find(x => x.name === name.trim());
+      value = String(saved.id || (found ? found.id : ''));
+      if (!value) throw new Error('매입처는 만들어졌는데 연결에 실패했습니다. 매입처 탭에서 확인해주세요.');
+    } catch(e) { toast(e.message); renderReorder(); return; }
+  }
+  try {
+    await api('setProductSupplier', [session.token, sku, value || '']);
+    const p = state.products.find(x=>x.sku===sku);
+    if (p) p.supplierId = value ? Number(value) : null;
+    const row = state.rows.find(x=>x.sku===sku);
+    const sup = state.suppliers.find(x=>String(x.id)===String(value));
+    if (row) { row.supplierName = sup ? sup.name : null; if (sup?.leadTimeDays) row.leadTimeDays = sup.leadTimeDays; }
+    renderReorder();
+    // 리드타임·발주주기가 비어 있으면 발주 계산이 기본값으로 돌아간다 — 그 자리에서 알려준다.
+    if (sup && !sup.leadTimeDays) {
+      toast(`${sup.name} 지정됨 — 리드타임이 비어 있어요`);
+      setTimeout(()=>{ if (confirm(`${sup.name}의 리드타임(발주→입고 며칠)이 아직 비어 있습니다.\n지금 채우시겠습니까? 발주 권장량이 정확해집니다.`)) openSupplierEdit(sup.id); }, 250);
+    } else { toast(sup ? sup.name + ' 지정됨' : '미지정으로 바꿨습니다'); }
+  } catch(e) { toast(e.message); renderReorder(); }
 }
 function openSupplierEdit(id) {
   if (!isMgr()) return;
