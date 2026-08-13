@@ -340,9 +340,19 @@
     <div id="panel-sanjiboard" class="panel">
       <p class="note">우리 창고를 거치지 않는 위탁 상품입니다. 파일에 매입가가 들어있어 <b>건별 마진이 바로 계산</b>됩니다.<br>
       마진 = 상품값 + 고객배송비 − 매입가 − 공급사배송비</p>
+      <div class="tbl-wrap" style="padding:12px 16px;margin-bottom:14px;">
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+          <b style="font-size:13px;">📅 기간</b>
+          <input type="date" id="sj-from" onchange="applySanjiRange()" style="border:1px solid var(--line);border-radius:8px;padding:7px 10px;font-size:13px;">
+          <span style="color:var(--sub);">~</span>
+          <input type="date" id="sj-to" onchange="applySanjiRange()" style="border:1px solid var(--line);border-radius:8px;padding:7px 10px;font-size:13px;">
+          <span id="sj-preset" style="display:flex;gap:6px;flex-wrap:wrap;"></span>
+        </div>
+        <div class="note" id="sj-range-note" style="margin:8px 0 0;"></div>
+      </div>
       <div class="cards" id="sanji-kpi"></div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:16px;" class="board-grid">
-        <div><h3 style="margin:4px 0 10px;font-size:14.5px;">공급사별 (최근 30일)</h3>
+        <div><h3 style="margin:4px 0 10px;font-size:14.5px;" id="h-sanji-sup">공급사별</h3>
           <div class="tbl-wrap"><div class="table-scroll" style="max-height:340px;"><table id="t-sanji-sup"></table></div></div></div>
         <div><h3 style="margin:4px 0 10px;font-size:14.5px;">일별 추이</h3>
           <div class="tbl-wrap"><div class="table-scroll" style="max-height:340px;"><table id="t-sanji-day"></table></div></div></div>
@@ -507,6 +517,7 @@ let session = JSON.parse(localStorage.getItem('erp_session') || 'null');
 const state = { rows: [], products: [], suppliers: [], users: [], pos: [], sales: null, sanji: null,
   sanjiSuppliers: [], sanjiProducts: [], sanjiChanges: [], uploadStatus: null,
   pflow: null, channels: [], dailyCosts: [], health: null, healthCount: 0, requests: null,
+  sanjiRange: { from: null, to: null },
   filter: { status:'all', reorder:'all', pos:'all', supplier:'all', match:'all', sanjiMatch:'all', req:'open' },
   q: { status:'', reorder:'', products:'', match:'', supplier:'', sanjiSup:'', sanjiMatch:'' },
   sort: {}, tab: 'board', sub: {} };
@@ -2485,7 +2496,7 @@ async function loadSales() {
   try {
     const [sd, sj, ss, sp] = await Promise.all([
       api('getSalesDashboard', [session.token, '30']),
-      api('getSanjiDashboard', [session.token, '30']),
+      api('getSanjiBoard', [session.token, state.sanjiRange.from || '', state.sanjiRange.to || '']),
       api('getSanjiSuppliers', [session.token]),
       api('getSanjiProducts', [session.token, '30']) ]);
     state.sales = sd; state.sanji = sj; state.sanjiSuppliers = ss; state.sanjiProducts = sp;
@@ -2650,8 +2661,51 @@ async function saveSanjiMatch(pnameEnc, poptEnc) {
   } catch(e) { toast(e.message); }
 }
 
+// ---------- 산지 기간 선택 (요청 #4) ----------
+// 자료가 있는 날짜 밖은 아예 못 고르게 min/max 를 걸어둔다.
+async function loadSanjiBoard(from, to) {
+  try {
+    state.sanjiRange = { from: from || null, to: to || null };
+    state.sanji = await api('getSanjiBoard', [session.token, from || '', to || '']);
+    renderSanji(); renderNav(); renderSubTabs();
+  } catch(e) { toast(e.message); }
+}
+function applySanjiRange() {
+  loadSanjiBoard(document.getElementById('sj-from').value, document.getElementById('sj-to').value);
+}
+function setSanjiPreset(kind) {
+  const s = state.sanji || {};
+  if (!s.maxDate) return;
+  const max = new Date(s.maxDate + 'T00:00:00');
+  const iso = d => { const x = new Date(d); x.setMinutes(x.getMinutes() - x.getTimezoneOffset()); return x.toISOString().slice(0,10); };
+  let from, to = s.maxDate;
+  if (kind === 'all')        { from = s.minDate; }
+  else if (kind === 'month') { from = iso(new Date(max.getFullYear(), max.getMonth(), 1)); }
+  else if (kind === 'prev')  { from = iso(new Date(max.getFullYear(), max.getMonth()-1, 1));
+                               to   = iso(new Date(max.getFullYear(), max.getMonth(), 0)); }
+  else { const d = new Date(max); d.setDate(d.getDate() - (Number(kind) - 1)); from = iso(d); }
+  loadSanjiBoard(from, to);
+}
+function renderSanjiRangeBar() {
+  const s = state.sanji; if (!s) return;
+  const fEl = document.getElementById('sj-from'), tEl = document.getElementById('sj-to');
+  if (!fEl || !tEl) return;
+  [fEl, tEl].forEach(el => { el.min = s.minDate || ''; el.max = s.maxDate || ''; });
+  fEl.value = s.from || ''; tEl.value = s.to || '';
+  const presets = [['7','최근 7일'],['30','최근 30일'],['month','이번 달'],['prev','지난 달'],['all','전체']];
+  document.getElementById('sj-preset').innerHTML = presets.map(([k,label]) =>
+    `<div class="pill" onclick="setSanjiPreset('${k}')">${label}</div>`).join('');
+  const note = document.getElementById('sj-range-note');
+  if (note) note.innerHTML = s.minDate
+    ? `보고 있는 기간 <b>${s.from} ~ ${s.to}</b> (${fmt(s.days)}일) · 자료가 있는 날짜는 <b>${s.minDate} ~ ${s.maxDate}</b> 뿐이라 그 밖은 고를 수 없습니다.`
+    : '아직 산지 자료가 없습니다.';
+}
 function renderSanji() {
   const s = state.sanji; if (!s) return;
+  renderSanjiRangeBar();
+  const period = s.from ? `${s.from} ~ ${s.to}` : '최근 30일';
+  const hSup = document.getElementById('h-sanji-sup');
+  if (hSup) hSup.textContent = `공급사별 (${period})`;
   const t = s.total || {};
   const pct = t.amount > 0 ? Math.round(t.margin / t.amount * 1000)/10 : null;
   const box = document.getElementById('sanji-kpi');
