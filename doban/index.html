@@ -332,6 +332,30 @@
 
     <!-- 채널 설정·비용입력 -->
     <!-- 반품일지 -->
+    <!-- 매출 대사 (매출 기준 vs 출고 기준) -->
+    <div id="panel-cross" class="panel">
+      <div id="pbar-cross"></div>
+      <p class="note" style="margin-top:0;">
+        <b>매출 기준</b>은 판매처가 말하는 숫자(손익·정산의 기준), <b>출고 기준</b>은 창고에서 나간 숫자(재고·발주의 기준)입니다.
+        둘은 원래 다릅니다 — <b>같아야 하는 게 아니라, 차이의 이유를 알아야 하는 것</b>입니다.</p>
+      <div class="drop" id="cs-drop" onclick="document.getElementById('cs-file-in').click()"
+           style="padding:18px;margin:0 0 14px;border-color:#1971C2;background:#E7F5FF;">
+        <div style="font-size:13px;font-weight:700;color:#1971C2;">📊 판매처 매출 자료 올리기</div>
+        <div style="font-size:11.5px;color:var(--sub);margin-top:6px;line-height:1.5;">
+          <b>날짜 · 판매처 · 상품매출</b> 3칸만 있으면 됩니다 (배송비매출·배송비원가·광고비·쿠폰은 선택)<br>
+          판매처 이름은 "스마트스토어" "스스" "네이버" 아무거나 — 자동으로 맞춥니다</div>
+        <input type="file" id="cs-file-in" accept=".xlsx" style="display:none;" onchange="handleChannelSalesFile(this.files[0])">
+      </div>
+      <div id="cs-status"></div>
+      <div class="cards" id="cross-kpi"></div>
+      <div id="cross-missing"></div>
+      <h3 style="margin:14px 0 4px;font-size:14.5px;">판매처별</h3>
+      <p class="note" style="margin-top:2px;">매출 기준이 <b>0인데 출고가 있는 판매처</b>는, 그 채널이 시트·자료에서 빠져 있다는 뜻입니다.</p>
+      <div class="tbl-wrap" style="margin-bottom:16px;"><div class="table-scroll" style="max-height:380px;"><table id="t-cross-ch"></table></div></div>
+      <h3 style="margin:6px 0 10px;font-size:14.5px;">날짜별</h3>
+      <div class="tbl-wrap"><div class="table-scroll" style="max-height:420px;"><table id="t-cross-day"></table></div></div>
+    </div>
+
     <div id="panel-returns" class="panel">
       <div id="pbar-returns"></div>
       <p class="note" style="margin-top:0;">반품 1건은 <b>돈이 나가는 일</b>입니다. 여기 적으면 순매출·이익에서 자동으로 빠지고,
@@ -551,7 +575,7 @@ const ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZ
 let session = JSON.parse(localStorage.getItem('doban_session') || 'null');
 const state = { rows: [], products: [], suppliers: [], users: [], pos: [], sales: null, sanji: null,
   sanjiSuppliers: [], sanjiProducts: [], sanjiChanges: [], uploadStatus: null,
-  pflow: null, channels: [], dailyCosts: [], health: null, healthCount: 0, requests: null, returns: null,
+  pflow: null, channels: [], dailyCosts: [], health: null, healthCount: 0, requests: null, returns: null, cross: null,
   sanjiRange: { from: null, to: null }, salesBasis: 'ship', salesShip: null, salesOrder: null,
   period: { from: null, to: null }, periodPreset: '', rows0Period: null, bounds: null,
   filter: { status:'all', reorder:'all', pos:'all', supplier:'all', match:'all', sanjiMatch:'all', req:'open' },
@@ -630,6 +654,7 @@ const NAV = [
       { id:'sales',    name:'매출 분석' },
       { id:'pflow',    name:'💰 이익 흐름표' },
       { id:'returns',  name:'↩️ 반품', cnt: () => state.returns?.total?.cnt || 0 },
+      { id:'cross',    name:'🔀 매출 대사' },
       { id:'chanset',  name:'채널 설정·비용입력', mgr:true } ] },
   { id:'sanji', ico:'🌾', title:'산지직송',
     cnt: () => state.sanji?.unassigned || 0, subs:[
@@ -706,6 +731,7 @@ function showTab(id) {
   if (panelId === 'health') loadHealth();
   if (panelId === 'requests') loadRequests();
   if (panelId === 'returns') loadReturns();
+  if (panelId === 'cross') loadCross();
 }
 
 // ---------- 요청함 ----------
@@ -2714,7 +2740,7 @@ async function saveSanjiMatch(pnameEnc, poptEnc) {
 // ---------- 공통 기간 필터 (엑셀 필터처럼 아무 화면에서나) ----------
 // 재고·발주·매출·한눈에보기가 같은 기간을 본다. 한 곳에서 바꾸면 전부 따라간다.
 // 재고 수량 자체는 늘 최신 시점이고, 기간은 "얼마나 팔리느냐"에만 영향을 준다.
-const PERIOD_BARS = ['board','status','reorder','sales','returns'];
+const PERIOD_BARS = ['board','status','reorder','sales','returns','cross'];
 function periodBounds() {
   const p = state.rows0Period || {};
   const b = state.bounds || {};
@@ -2778,8 +2804,115 @@ async function loadPeriod(from, to) {
     document.getElementById('hd-ref').textContent = dash.refDate || '-';
     renderPeriodBars(); renderKpi(); renderStatus(); renderReorder();
     renderValuation(); renderOutbound(); renderGroups();
-    renderSales(); renderSalesBasisBar(); renderReturns(); renderBoard(); renderNav(); renderSubTabs();
+    renderSales(); renderSalesBasisBar(); renderReturns(); state.cross=null; loadCross(true); renderBoard(); renderNav(); renderSubTabs();
   } catch(e) { toast(e.message); }
+}
+
+// ---------- 매출 대사 (매출 기준 vs 출고 기준) ----------
+async function loadCross(force) {
+  if (state.cross && !force) { renderCross(); return; }
+  try {
+    state.cross = await api('getSalesCross', [session.token, state.period.from || '', state.period.to || '']);
+    renderCross();
+  } catch(e) { toast(e.message); }
+}
+function renderCross() {
+  const c = state.cross; if (!c) return;
+  const box = document.getElementById('cross-kpi'); if (!box) return;
+  const t = c.total || {};
+  const diff = (t.actual||0) - (t.ship||0);
+  const pct = t.actual > 0 ? Math.round(diff / t.actual * 1000) / 10 : null;
+  box.innerHTML = [
+    { label:'매출 기준 (판매처)', value: fmt(Math.round(t.actual||0))+'원', foot:'손익·정산의 기준' },
+    { label:'출고 기준 (창고)', value: fmt(Math.round(t.ship||0))+'원', foot:'재고·발주의 기준' },
+    { label:'차이', value: (diff>=0?'+':'')+fmt(Math.round(diff))+'원', foot: pct!=null?(pct+'% · 매출기준 대비'):'', cls: Math.abs(pct||0)>=15?'v-red':'' },
+    { label:'주문일 기준', value: fmt(Math.round(t.order||0))+'원', foot:'송장에서 뽑은 참고값' },
+  ].map(k=>`<div class="card"><div class="label">${k.label}</div><div class="value ${k.cls||''}" style="font-size:18px;">${k.value}</div><div class="foot">${k.foot}</div></div>`).join('');
+
+  // 매출 기준 자료에 아예 없는 채널 — 대표님 손익에서 통째로 빠져 있는 돈
+  const missing = (c.byChannel||[]).filter(x => (x.actual||0) === 0 && (x.ship||0) > 0);
+  const mSum = missing.reduce((a,x)=>a+(x.ship||0), 0);
+  const mBox = document.getElementById('cross-missing');
+  if (mBox) mBox.innerHTML = missing.length
+    ? `<div class="alert" style="background:#FFF5F5;border-color:#FFC9C9;color:var(--red);">
+        🚨 <b>매출 자료에 없는 판매처 ${missing.length}곳 · 합계 ${fmt(Math.round(mSum))}원</b><br>
+        <span style="font-size:12.5px;">${missing.slice(0,6).map(x=>esc(x.channel)+' '+fmt(Math.round(x.ship))+'원').join(' · ')}${missing.length>6?' 외':''}</span><br>
+        <span style="font-size:12.5px;">이 채널들은 판매가 있는데 매출 자료에는 안 들어와 있습니다 — <b>손익에서 통째로 빠집니다.</b></span></div>`
+    : '';
+
+  const bar = (a,b) => { const m = Math.max(a,b,1); return `<div style="height:5px;background:var(--line);border-radius:3px;overflow:hidden;margin-top:3px;">
+    <div style="height:100%;width:${Math.round(a/m*100)}%;background:var(--brand);"></div></div>`; };
+  document.getElementById('t-cross-ch').innerHTML =
+    `<thead><tr><th>판매처</th><th class="num">매출 기준</th><th class="num">출고 기준</th><th class="num">차이</th><th class="num">차이%</th></tr></thead><tbody>` +
+    (c.byChannel||[]).map(x=>`<tr${x.actual===0&&x.ship>0?' style="background:#FFF5F5;"':''}>
+      <td><b>${esc(x.channel)}</b>${x.actual===0&&x.ship>0?' <span class="badge" style="background:#FFF5F5;color:var(--red);">자료 없음</span>':''}</td>
+      <td class="num">${fmt(Math.round(x.actual))}원${bar(x.actual, x.ship)}</td>
+      <td class="num">${fmt(Math.round(x.ship))}원${bar(x.ship, x.actual)}</td>
+      <td class="num" style="color:${x.diff>=0?'var(--sub)':'var(--red)'};">${x.diff>=0?'+':''}${fmt(Math.round(x.diff))}</td>
+      <td class="num">${x.diffPct!=null?x.diffPct+'%':'-'}</td></tr>`).join('') + '</tbody>';
+
+  document.getElementById('t-cross-day').innerHTML =
+    `<thead><tr><th>날짜</th><th class="num">매출 기준</th><th class="num">출고 기준</th><th class="num">차이</th><th>메모</th></tr></thead><tbody>` +
+    (c.byDay||[]).map(x=>{
+      let memo = '';
+      if (x.actual > 0 && x.ship === 0) memo = '<span style="color:var(--red);">출고 자료 없음 — 주문만 있었거나 파일 미업로드</span>';
+      else if (x.actual === 0 && x.ship > 0) memo = '<span style="color:#E8590C;">매출 자료 없음</span>';
+      else if (x.actual > 0 && Math.abs(x.diffPct||0) >= 30) memo = '<span class="name-sub">차이 큼 — 출고 시점이 밀린 날일 수 있음</span>';
+      return `<tr><td>${x.date}<span class="name-sub"> ${DOW[dowOf(x.date)]}</span></td>
+        <td class="num">${fmt(Math.round(x.actual))}원</td><td class="num">${fmt(Math.round(x.ship))}원</td>
+        <td class="num" style="color:${Math.abs(x.diffPct||0)>=30?'var(--red)':'var(--sub)'};">${x.diff>=0?'+':''}${fmt(Math.round(x.diff))}</td>
+        <td style="font-size:12px;">${memo}</td></tr>`; }).join('') + '</tbody>';
+}
+// 판매처 매출 파일 — 날짜·판매처·상품매출 3칸만 있으면 받는다
+function handleChannelSalesFile(file) {
+  if (!file) return;
+  const st = document.getElementById('cs-status');
+  st.innerHTML = '<p class="note">파일 읽는 중...</p>';
+  const reader = new FileReader();
+  reader.onload = async e => {
+    try {
+      const wb = XLSX.read(new Uint8Array(e.target.result), { type:'array' });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const raw = XLSX.utils.sheet_to_json(ws, { header:1, raw:true });
+      const find = (r, names) => r.findIndex(x => names.some(n => String(x??'').replace(/\s/g,'').includes(n)));
+      let hi = -1, c = {};
+      for (let i=0; i<Math.min(raw.length, 12); i++) {
+        const r = (raw[i]||[]).map(x=>String(x??''));
+        const d = find(r, ['날짜','일자']), ch = find(r, ['판매처','채널','판매사']);
+        const rev = find(r, ['상품매출','실매출','매출액','매출']);
+        if (d>=0 && ch>=0 && rev>=0) {
+          hi = i; c = { date:d, ch, rev,
+            sr: find(r, ['배송비매출']), sc: find(r, ['배송비원가']),
+            ad: find(r, ['광고비']), cp: find(r, ['쿠폰']), qty: find(r, ['수량']) };
+          break;
+        }
+      }
+      if (hi < 0) throw new Error('날짜 / 판매처 / 상품매출 컬럼을 찾지 못했습니다');
+      const num = v => { const n = Number(String(v??'').replace(/[₩,\s]/g,'')); return isFinite(n) ? n : 0; };
+      const rows = [];
+      for (let i=hi+1; i<raw.length; i++) {
+        const r = raw[i]; if (!r) continue;
+        let d = r[c.date];
+        if (typeof d === 'number') { const dt = new Date(Math.round((d - 25569) * 86400 * 1000)); d = dt.toISOString().slice(0,10); }
+        else { d = String(d??'').trim().replace(/[.\/]/g,'-').slice(0,10); }
+        if (!/^\d{4}-\d{1,2}-\d{1,2}$/.test(d)) continue;
+        const [y,m,dd] = d.split('-'); d = `${y}-${String(m).padStart(2,'0')}-${String(dd).padStart(2,'0')}`;
+        const chv = String(r[c.ch]??'').trim(); if (!chv) continue;
+        rows.push({ date:d, channel:chv, revenue:num(r[c.rev]),
+          shipRevenue: c.sr>=0?num(r[c.sr]):0, shipCost: c.sc>=0?num(r[c.sc]):0,
+          adCost: c.ad>=0?num(r[c.ad]):0, coupon: c.cp>=0?num(r[c.cp]):0,
+          qty: c.qty>=0?num(r[c.qty]):null, source:'file' });
+      }
+      if (!rows.length) throw new Error('읽을 수 있는 줄이 없습니다');
+      st.innerHTML = `<p class="note">${fmt(rows.length)}줄 반영 중...</p>`;
+      const res = await api('uploadChannelSales', [session.token, rows]);
+      const days = [...new Set(rows.map(r=>r.date))].sort();
+      st.innerHTML = `<div class="alert" style="background:var(--green-bg);border-color:#B2F2BB;color:var(--green);">
+        ✅ 반영 완료 — <b>${fmt(res.saved)}줄</b> (${days[0]} ~ ${days[days.length-1]}, ${days.length}일치)</div>`;
+      state.cross = null; loadCross(true);
+    } catch(err) { st.innerHTML = `<div class="alert">❌ ${esc(err.message)}</div>`; }
+  };
+  reader.readAsArrayBuffer(file);
 }
 
 // ---------- 매출 날짜 기준 전환 ----------
