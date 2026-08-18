@@ -1643,14 +1643,13 @@ function renderMatch() {
   if (q) rows = rows.filter(r => (r.name+r.sku+(r.stdCode||'')).toLowerCase().includes(q));
   rows = applySort(rows, 'match', 'stdCode', 1);
   rows = [...rows].sort((a,b)=>(a.supplierId?1:0)-(b.supplierId?1:0));
-  const opts = s => `<option value="">— 미지정 —</option>` + state.suppliers.filter(x=>x.active!==false).map(x=>`<option value="${x.id}" ${s==x.id?'selected':''}>${esc(x.name)}</option>`).join('');
   document.getElementById('t-match').innerHTML =
     `<thead><tr>${th2('코드','stdCode','match')}${th2('품목','name','match')}${th2('제조사(원본)','manufacturer','match')}<th>매입처</th><th class="num">매입처 리드타임</th></tr></thead><tbody>` +
     rows.map(p => { const sup = state.suppliers.find(x=>x.id===p.supplierId);
       return `<tr><td><span class="code main">${esc(p.stdCode||'-')}</span></td>
       <td><div class="name-cell">${esc(p.name)}</div><div class="name-sub">${esc(p.sku)}</div></td>
       <td style="color:var(--sub);">${esc(p.manufacturer||'-')}</td>
-      <td>${isMgr() ? `<select class="inline" onchange="matchSupplier('${p.sku}', this.value)">${opts(p.supplierId)}</select>` : esc(sup?.name||'미지정')}</td>
+      <td>${isMgr() ? `<select class="inline" onchange="pickSupplier('${p.sku}', this.value, this, 'match')">${supplierOptions(p.supplierId)}</select>` : esc(sup?.name||'미지정')}</td>
       <td class="num">${sup?.leadTimeDays ? sup.leadTimeDays+'일' : '<span style="color:var(--sub);">-</span>'}</td></tr>`; }).join('') + '</tbody>';
 }
 async function matchSupplier(sku, supplierId) {
@@ -1679,19 +1678,27 @@ function supplierCell(r) {
 function openSupplierPick(sku, el) {
   const p = state.products.find(x=>x.sku===sku);
   el.outerHTML = `<select class="inline" autofocus onclick="event.stopPropagation()"
-    onchange="pickSupplier('${sku}', this.value, this)">${supplierOptions(p?.supplierId)}</select>`;
+    onchange="pickSupplier('${sku}', this.value, this, 'reorder')">${supplierOptions(p?.supplierId)}</select>`;
 }
-async function pickSupplier(sku, value, sel) {
+// 발주 추천 / 품목 매칭 두 화면이 같은 함수를 쓴다.
+// 어디서 만들든 매입처는 한 곳(매입처 관리)에 쌓인다.
+function redrawAfterSupplier(where) {
+  if (where === 'match') { renderMatch(); renderSuppliers(); }
+  else renderReorder();
+  renderNav(); renderSubTabs();
+}
+async function pickSupplier(sku, value, sel, where) {
   if (value === '__new') {
-    const name = prompt('새 매입처 이름을 적어주세요');
-    if (!name || !name.trim()) { renderReorder(); return; }
+    const name = prompt('새 매입처 이름을 적어주세요\n\n(리드타임·결제조건 같은 나머지 정보는 매입처 목록에서 채우시면 됩니다)');
+    if (!name || !name.trim()) { redrawAfterSupplier(where); return; }
     try {
       const saved = await api('saveSupplier', [session.token, '', { name: name.trim() }]);
       state.suppliers = await api('getSuppliers', [session.token]);
+      state.supplierDocs = null;   // 새 매입처는 공유 링크도 새로 받아와야 한다
       const found = state.suppliers.find(x => x.name === name.trim());
       value = String(saved.id || (found ? found.id : ''));
       if (!value) throw new Error('매입처는 만들어졌는데 연결에 실패했습니다. 매입처 탭에서 확인해주세요.');
-    } catch(e) { toast(e.message); renderReorder(); return; }
+    } catch(e) { toast(e.message); redrawAfterSupplier(where); return; }
   }
   try {
     await api('setProductSupplier', [session.token, sku, value || '']);
@@ -1700,13 +1707,13 @@ async function pickSupplier(sku, value, sel) {
     const row = state.rows.find(x=>x.sku===sku);
     const sup = state.suppliers.find(x=>String(x.id)===String(value));
     if (row) { row.supplierName = sup ? sup.name : null; if (sup?.leadTimeDays) row.leadTimeDays = sup.leadTimeDays; }
-    renderReorder();
+    redrawAfterSupplier(where);
     // 리드타임·발주주기가 비어 있으면 발주 계산이 기본값으로 돌아간다 — 그 자리에서 알려준다.
     if (sup && !sup.leadTimeDays) {
       toast(`${sup.name} 지정됨 — 리드타임이 비어 있어요`);
       setTimeout(()=>{ if (confirm(`${sup.name}의 리드타임(발주→입고 며칠)이 아직 비어 있습니다.\n지금 채우시겠습니까? 발주 권장량이 정확해집니다.`)) openSupplierEdit(sup.id); }, 250);
     } else { toast(sup ? sup.name + ' 지정됨' : '미지정으로 바꿨습니다'); }
-  } catch(e) { toast(e.message); renderReorder(); }
+  } catch(e) { toast(e.message); redrawAfterSupplier(where); }
 }
 function openSupplierEdit(id) {
   if (!isMgr()) return;
