@@ -3227,12 +3227,68 @@ function renderSales() {
           <span class="name-sub" id="um-nm-${i}-0" style="flex:1;">${guessMult(u.popt)>1?`<b style="color:#E8590C;">옵션에 "x${guessMult(u.popt)}" 이 있어 배수를 ${guessMult(u.popt)}로 넣었습니다 — 맞는지 확인!</b>`:''}</span>
         </div>
       </div>
-      <div style="display:flex;gap:8px;">
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
         <button class="btn btn-sm" onclick="addUmItem(${i})">+ 구성품</button>
+        <button class="btn btn-sm" onclick="openQuickProduct(${i})">✚ 우리 품목에 없음 — 새로 만들기</button>
         <div style="flex:1;"></div>
         <button class="btn btn-sm btn-primary" onclick="saveMapping(${i})">연결 저장</button>
       </div>
     </div>`).join('');
+}
+
+// ---------- 업로드 중 새 품목 만들기 ----------
+// 이름과 "창고 물건인가" 둘만 받는다. 원가·매입처는 나중에 품목 관리에서.
+function openQuickProduct(i) {
+  const u = (state.sales?.unmatched || [])[i]; if (!u) return;
+  // 상품명보다 옵션명이 실제 품목에 가깝다 (상품명은 "푸드-안성물류 상품" 처럼 뭉뚱그려져 있음)
+  const guess = (u.popt && u.popt.trim()) ? u.popt.trim() : (u.pname || '').trim();
+  const clean = guess.replace(/^[^=]*=/, '').replace(/\s*(x|X|×)\s*\d+\s*(팩|개|봉|입|세트)?\s*$/, '').trim();
+  openModal(`<h2>✚ 새 품목 만들기</h2>
+    <div class="sub">지금은 <b>이름과 창고 여부</b>만 정하면 됩니다. 원가·매입처·카테고리는 나중에 품목 관리에서 채우세요.</div>
+    <div class="tbl-wrap" style="padding:11px 14px;margin-bottom:12px;">
+      <div class="note" style="margin:0;">판매 상품: <b>${esc(u.pname)}</b><br>옵션: ${esc(u.popt) || '(없음)'}</div>
+    </div>
+    <div class="form-grid">
+      <div style="grid-column:1/-1;"><label>품목명 *</label>
+        <input id="qp-name" value="${esc(clean)}" placeholder="예: 소분 수입산 소곱창 160g_메이플"></div>
+      <div style="grid-column:1/-1;">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+          <input type="checkbox" id="qp-wh" checked style="width:16px;height:16px;">
+          <span><b>창고 물건입니다</b> (안성창고에 실물이 있는 것)</span></label>
+        <div class="note" style="margin:6px 0 0;">
+          ✅ <b>체크</b> — 재고를 추적하고, 팔리면 출고로 기록됩니다<br>
+          ⬜ <b>해제</b> — 산지직송·위탁처럼 우리 창고를 안 거치는 것. 매출만 잡히고 재고는 안 건드립니다</div>
+      </div>
+      <div><label>카테고리 (선택)</label>
+        <select id="qp-cat"><option value="">나중에</option>
+          ${['곱창류','고기류','양념류','탕류','기타류'].map(c=>`<option>${c}</option>`).join('')}</select></div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeModal()">취소</button>
+      <button class="btn btn-primary" onclick="submitQuickProduct(${i})">만들고 연결하기</button>
+    </div>`);
+  setTimeout(()=>document.getElementById('qp-name')?.focus(), 60);
+}
+async function submitQuickProduct(i) {
+  const name = document.getElementById('qp-name').value.trim();
+  if (!name) { toast('품목명을 적어주세요'); return; }
+  try {
+    const r = await api('quickCreateProduct', [session.token, {
+      name, inWarehouse: document.getElementById('qp-wh').checked,
+      category: document.getElementById('qp-cat').value }]);
+    state.products = await api('getProducts', [session.token]);
+    closeModal();
+    // 빈 SKU 칸 중 첫 번째에 방금 만든 품목을 넣어준다
+    let j = 0, put = false;
+    while (document.getElementById(`um-sku-${i}-${j}`)) {
+      const el = document.getElementById(`um-sku-${i}-${j}`);
+      if (!el.value.trim()) { el.value = r.sku; showSkuName(el); put = true; break; }
+      j++;
+    }
+    toast(r.existed ? `이미 있던 품목입니다 — ${r.name} (${r.sku})`
+                    : `${r.sku} 만들었습니다${put ? ' · 칸에 넣었습니다' : ''}`);
+    if (!put) toast(`${r.sku} 를 SKU 칸에 직접 넣어주세요`);
+  } catch(e) { toast(e.message); }
 }
 function showSkuName(inp) {
   const p = state.products.find(x=>x.sku===inp.value.trim());
