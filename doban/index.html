@@ -3219,14 +3219,8 @@ function renderSales() {
     <div class="tbl-wrap" style="margin-bottom:10px;padding:13px 16px;">
       <div style="font-size:13px;margin-bottom:3px;"><b>${esc(u.pname)}</b></div>
       <div style="font-size:12px;color:var(--sub);margin-bottom:9px;">${esc(u.popt)||'(옵션 없음)'} · ${fmt(Math.round(u.qty))}개 판매 · ${esc(u.channels)}</div>
-      <div id="um-items-${i}">
-        <div style="display:flex;gap:7px;margin-bottom:6px;align-items:center;">
-          <input list="sku-list" class="search-box" style="width:150px;margin:0;" placeholder="SKU 입력/검색" id="um-sku-${i}-0" oninput="showSkuName(this)">
-          <span style="font-size:12px;color:var(--sub);">× 수량배수</span>
-          <input type="number" value="${guessMult(u.popt)}" min="0.1" step="0.1" style="width:70px;border:1px solid var(--line);border-radius:7px;padding:7px;text-align:right;${guessMult(u.popt)>1?'background:#FFF9DB;border-color:#FFD43B;':''}" id="um-qty-${i}-0">
-          <span class="name-sub" id="um-nm-${i}-0" style="flex:1;">${guessMult(u.popt)>1?`<b style="color:#E8590C;">옵션에 "x${guessMult(u.popt)}" 이 있어 배수를 ${guessMult(u.popt)}로 넣었습니다 — 맞는지 확인!</b>`:''}</span>
-        </div>
-      </div>
+      ${umPartsNotice(u)}
+      <div id="um-items-${i}">${umRows(i, u)}</div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;">
         <button class="btn btn-sm" onclick="addUmItem(${i})">+ 구성품</button>
         <button class="btn btn-sm" onclick="openQuickProduct(${i})">✚ 우리 품목에 없음 — 새로 만들기</button>
@@ -3295,6 +3289,79 @@ function showSkuName(inp) {
   const nm = document.getElementById(inp.id === 'rt-sku' ? 'rt-skuname' : inp.id.replace('um-sku','um-nm'));
   if (nm) nm.textContent = p ? '→ ' + p.name : '';
 }
+// ---------- 세트 옵션 자동 분해 ----------
+// "순살족발 200g + 삼겹보쌈 300g" 처럼 +로 이어진 건 한 주문에 둘 다 나간다.
+// 손으로 [+구성품]을 눌러 채우다 빠뜨리면 재고가 한쪽만 깎인다 — 그래서 미리 나눠준다.
+function splitOptionParts(popt) {
+  let t = String(popt || '').trim();
+  if (!t) return [];
+  t = t.replace(/^[^=]{0,40}=/, '');            // "배송/품질 100%보장=" 같은 앞머리 제거
+  t = t.replace(/[\[\(][^\]\)]*[\]\)]/g, ' ');  // [증정] (관자+뽈살) 같은 괄호 설명 제거
+  const parts = t.split(/\s*\+\s*/).map(x => x.trim()).filter(x => x.length >= 2);
+  return parts.length >= 2 ? parts : [];
+}
+// 품목명 자동 추측 — 확실할 때만 채운다. 애매하면 비워두는 게 낫다.
+function guessSkuFor(text) {
+  const norm = s => String(s||'').toLowerCase().replace(/[\s_·・]/g, '');
+  const t = norm(text);
+  if (!t) return null;
+  let best = null, bestLen = 0;
+  for (const p of (state.products || [])) {
+    if (p.active === false) continue;
+    const n = norm(p.name);
+    if (n.length < 4) continue;
+    // 품목명이 옵션 안에 통째로 들어있을 때만 (부분 유사도는 오매칭을 부른다)
+    if (t.includes(n) && n.length > bestLen) { best = p; bestLen = n.length; }
+  }
+  return best;
+}
+function umRow(i, j, mult, hint, sku, guessed) {
+  const warn = mult > 1;
+  return `<div style="display:flex;gap:7px;margin-bottom:6px;align-items:center;">
+    <input list="sku-list" class="search-box" style="width:150px;margin:0;${guessed?'background:#EBFBEE;border-color:#B2F2BB;':''}"
+      placeholder="SKU 입력/검색" id="um-sku-${i}-${j}" value="${sku||''}" oninput="showSkuName(this)">
+    <span style="font-size:12px;color:var(--sub);">× 수량배수</span>
+    <input type="number" value="${mult}" min="0.1" step="0.1" id="um-qty-${i}-${j}"
+      style="width:70px;border:1px solid var(--line);border-radius:7px;padding:7px;text-align:right;${warn?'background:#FFF9DB;border-color:#FFD43B;':''}">
+    <span class="name-sub" id="um-nm-${i}-${j}" style="flex:1;">${
+      hint ? `<b style="color:#1971C2;">${esc(hint)}</b>` : ''
+    }${guessed ? ` → <b style="color:var(--green);">${esc(guessed.name)}</b> <span style="color:var(--sub);">(추측 — 맞는지 확인)</span>` : ''}${
+      !guessed && warn ? `<b style="color:#E8590C;">배수 ${mult} 자동 인식 — 확인!</b>` : ''}</span>
+  </div>`;
+}
+function umRows(i, u) {
+  const parts = splitOptionParts(u.popt);
+  if (!parts.length) {
+    const m = guessMult(u.popt);
+    const g = guessSkuFor(u.popt) || guessSkuFor(u.pname);
+    return umRow(i, 0, m, '', g ? g.sku : '', g);
+  }
+  return parts.map((p, j) => {
+    const m = guessMult(p);
+    const g = guessSkuFor(p);
+    return umRow(i, j, m, p, g ? g.sku : '', g);
+  }).join('');
+}
+function umPartsNotice(u) {
+  const parts = splitOptionParts(u.popt);
+  if (parts.length) {
+    return `<div class="alert" style="background:#E7F5FF;border-color:#A5D8FF;color:#1864AB;padding:9px 12px;margin:0 0 9px;font-size:12.5px;">
+      📦 <b>세트 상품으로 봤습니다 — 한 주문에 ${parts.length}개가 나갑니다.</b>
+      아래 ${parts.length}줄로 나눠뒀으니 각각 SKU만 확인해주세요.</div>`;
+  }
+  // 괄호 안의 +는 자동으로 안 나눈다.
+  // "뒷고기모듬 500g(관자살+뽈살+항정살)"은 한 품목이고,
+  // "모듬곱창 960g(곱창+대창+막창)"은 여러 품목이다 — 글자만 봐서는 구분이 안 된다.
+  const inner = String(u.popt || '').match(/[\[\(]([^\]\)]*\+[^\]\)]*)[\]\)]/);
+  if (inner) {
+    return `<div class="alert" style="background:var(--brand-soft);border-color:#FFD8A8;color:#8A4B00;padding:9px 12px;margin:0 0 9px;font-size:12.5px;">
+      ⚠ 괄호 안에 <b>${esc(inner[1].trim())}</b> 가 있습니다.<br>
+      이게 <b>여러 품목이 같이 나가는 세트</b>면 아래 [+ 구성품]으로 나눠서 넣어주세요.
+      한 품목의 설명일 뿐이면 그냥 한 줄로 두시면 됩니다.</div>`;
+  }
+  return '';
+}
+
 function addUmItem(i) {
   const box = document.getElementById('um-items-'+i);
   const j = box.children.length;
