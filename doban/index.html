@@ -286,7 +286,15 @@
     <!-- 매출 -->
     <div id="panel-sales" class="panel">
       <div id="pbar-sales"></div>
-      <p class="note" style="margin-top:0;"><b style="color:var(--brand);">⭐ 출고(발송)일 기준</b> · 배송비 제외 상품값 기준입니다.</p>
+      <div class="tbl-wrap" style="padding:11px 15px;margin-bottom:13px;">
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+          <b style="font-size:13px;">📐 날짜 기준</b>
+          <div class="pill" id="basis-ship" onclick="setSalesBasis('ship')">출고일 (회사 공식)</div>
+          <div class="pill" id="basis-order" onclick="setSalesBasis('order')">주문일 (판매처·시트와 같음)</div>
+        </div>
+        <div class="note" id="basis-note" style="margin:7px 0 0;"></div>
+      </div>
+      <div id="sales-basis-warn"></div>
       <div id="sales-unmatched-notice"></div>
       <div class="cards" id="sales-kpi"></div>
       <h3 style="margin:6px 0 8px;font-size:14.5px;">판매처별 (최근 30일) — 자사재고 + 산지직송 합산</h3>
@@ -544,7 +552,7 @@ let session = JSON.parse(localStorage.getItem('doban_session') || 'null');
 const state = { rows: [], products: [], suppliers: [], users: [], pos: [], sales: null, sanji: null,
   sanjiSuppliers: [], sanjiProducts: [], sanjiChanges: [], uploadStatus: null,
   pflow: null, channels: [], dailyCosts: [], health: null, healthCount: 0, requests: null, returns: null,
-  sanjiRange: { from: null, to: null },
+  sanjiRange: { from: null, to: null }, salesBasis: 'ship', salesShip: null, salesOrder: null,
   period: { from: null, to: null }, periodPreset: '', rows0Period: null, bounds: null,
   filter: { status:'all', reorder:'all', pos:'all', supplier:'all', match:'all', sanjiMatch:'all', req:'open' },
   q: { status:'', reorder:'', products:'', match:'', supplier:'', sanjiSup:'', sanjiMatch:'' },
@@ -2541,9 +2549,9 @@ async function loadSales() {
       api('getSanjiBoard', [session.token, state.sanjiRange.from || '', state.sanjiRange.to || '']),
       api('getSanjiSuppliers', [session.token]),
       api('getSanjiProducts', [session.token, '30']) ]);
-    state.sales = sd; state.sanji = sj; state.sanjiSuppliers = ss; state.sanjiProducts = sp;
+    state.salesShip = sd; state.sales = (state.salesBasis === 'order' && state.salesOrder) ? state.salesOrder : sd; state.sanji = sj; state.sanjiSuppliers = ss; state.sanjiProducts = sp;
     try { state.sanjiChanges = await api('getSanjiPriceChanges', [session.token, '30']); } catch(e) { state.sanjiChanges = []; }
-    renderSales(); renderSanji(); renderSanjiSuppliers(); renderSanjiMatch(); renderNav(); renderSubTabs();
+    renderSales(); renderSalesBasisBar(); renderSanji(); renderSanjiSuppliers(); renderSanjiMatch(); renderNav(); renderSubTabs();
   } catch(e) { toast(e.message); }
 }
 
@@ -2759,16 +2767,43 @@ function setPeriod(kind) {
 async function loadPeriod(from, to) {
   state.period = { from: from || null, to: to || null };
   try {
-    const [dash, sd, rt] = await Promise.all([
+    const [dash, sd, rt, so] = await Promise.all([
       api('getDashboard', [session.token, from || '', to || '']),
       api('getSalesDashboard', [session.token, from || '', to || '']),
-      api('getReturns', [session.token, from || '', to || '']) ]);
-    state.rows = dash.rows; state.rows0Period = dash.period; state.sales = sd; state.returns = rt;
+      api('getReturns', [session.token, from || '', to || '']),
+      api('getSalesByOrder', [session.token, from || '', to || '']).catch(()=>null) ]);
+    state.rows = dash.rows; state.rows0Period = dash.period; state.returns = rt;
+    state.salesShip = sd; state.salesOrder = so;
+    state.sales = (state.salesBasis === 'order' && so) ? so : sd;
     document.getElementById('hd-ref').textContent = dash.refDate || '-';
     renderPeriodBars(); renderKpi(); renderStatus(); renderReorder();
     renderValuation(); renderOutbound(); renderGroups();
-    renderSales(); renderReturns(); renderBoard(); renderNav(); renderSubTabs();
+    renderSales(); renderSalesBasisBar(); renderReturns(); renderBoard(); renderNav(); renderSubTabs();
   } catch(e) { toast(e.message); }
+}
+
+// ---------- 매출 날짜 기준 전환 ----------
+// 우리 공식은 출고일(재고와 맞아야 하므로). 대표님 시트·판매처 화면은 주문일.
+// 같은 송장 파일에서 두 기준을 다 만들어두고 화면에서 바꿔 본다.
+function setSalesBasis(b) {
+  state.salesBasis = b;
+  state.sales = (b === 'order' && state.salesOrder) ? state.salesOrder : state.salesShip;
+  renderSales(); renderSalesBasisBar();
+}
+function renderSalesBasisBar() {
+  const b = state.salesBasis || 'ship';
+  const shipEl = document.getElementById('basis-ship'), ordEl = document.getElementById('basis-order');
+  if (!shipEl || !ordEl) return;
+  shipEl.classList.toggle('active', b === 'ship');
+  ordEl.classList.toggle('active', b === 'order');
+  const note = document.getElementById('basis-note');
+  if (note) note.innerHTML = b === 'order'
+    ? '<b>주문일 기준</b> — 고객이 주문을 넣은 날로 셉니다. 판매처 관리자 화면·대표님 수기 시트와 같은 기준이라 <b>그 숫자와 맞춰볼 때</b> 씁니다.'
+    : '<b>출고일 기준</b> — 물건이 창고에서 나간 날로 셉니다. <b>재고·발주와 맞는 회사 공식 숫자</b>입니다. 배송비 제외 상품값 기준.';
+  const warn = document.getElementById('sales-basis-warn');
+  if (warn) warn.innerHTML = b === 'order'
+    ? '<div class="alert" style="background:var(--brand-soft);border-color:#FFD8A8;color:#8A4B00;">⚠ 주문일 기준은 <b>아직 안 나간 주문이 빠져 있습니다.</b> 최근 며칠은 실제보다 적게 보입니다 — 그 주문들의 송장 파일이 올라오면 채워집니다.</div>'
+    : '';
 }
 
 // ---------- 반품일지 ----------
