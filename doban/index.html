@@ -221,6 +221,7 @@
       <div id="pbar-status"></div>
       <div class="cards" id="kpi-cards"></div>
       <div class="filters" id="status-pills"></div>
+      <div id="disc-bar"></div>
       <div class="toolbar"><input class="search-box" placeholder="품목명 / 코드 검색" oninput="state.q.status=this.value; renderStatus();"></div>
       <div class="tbl-wrap"><div class="table-scroll"><table id="t-status"></table></div></div>
     </div>
@@ -577,6 +578,7 @@ const state = { rows: [], products: [], suppliers: [], users: [], pos: [], sales
   sanjiSuppliers: [], sanjiProducts: [], sanjiChanges: [], uploadStatus: null,
   pflow: null, channels: [], dailyCosts: [], health: null, healthCount: 0, requests: null, returns: null, cross: null,
   sanjiRange: { from: null, to: null }, salesBasis: 'ship', salesShip: null, salesOrder: null,
+  discSel: new Set(),
   period: { from: null, to: null }, periodPreset: '', rows0Period: null, bounds: null,
   filter: { status:'all', reorder:'all', pos:'all', supplier:'all', match:'all', sanjiMatch:'all', req:'open' },
   q: { status:'', reorder:'', products:'', match:'', supplier:'', sanjiSup:'', sanjiMatch:'' },
@@ -1327,11 +1329,53 @@ function renderKpi() {
 }
 function jumpToReorder(f) { state.filter.reorder = f==='all'?'all':f; showTab('reorder'); renderReorder(); }
 
+// ---------- 단종(취급중지) 처리 ----------
+// 안 파는 품목이 발주 추천에 계속 떠서 목록을 어지럽힌다.
+// 지우면 과거 기록이 깨지므로 지우지 않고, 상태만 '단종'으로 바꿔 화면에서 감춘다.
+function toggleDisc(sku, on) {
+  if (on) state.discSel.add(sku); else state.discSel.delete(sku);
+  renderDiscBar();
+}
+function toggleAllDisc(el) {
+  document.querySelectorAll('#t-status .disc-ck').forEach(c => {
+    c.checked = el.checked;
+    if (el.checked) state.discSel.add(c.value); else state.discSel.delete(c.value);
+  });
+  renderDiscBar();
+}
+function renderDiscBar() {
+  const bar = document.getElementById('disc-bar'); if (!bar) return;
+  const n = state.discSel.size;
+  if (!n || !isMgr()) { bar.innerHTML = ''; return; }
+  // 고른 것 중 이미 단종인 게 있으면 되돌리기도 같이 보여준다
+  const sel = [...state.discSel];
+  const cur = sel.filter(s => state.rows.find(r => r.sku === s)?.discontinued).length;
+  bar.innerHTML = `<div class="tbl-wrap" style="padding:10px 14px;margin:0 0 11px;display:flex;gap:9px;align-items:center;flex-wrap:wrap;">
+    <b style="font-size:13px;">${n}개 선택됨</b>
+    ${cur < n ? `<button class="btn btn-sm btn-primary" onclick="applyDisc(true)">🚫 단종 처리 (목록에서 숨기기)</button>` : ''}
+    ${cur > 0 ? `<button class="btn btn-sm" onclick="applyDisc(false)">↩ 단종 해제</button>` : ''}
+    <button class="btn btn-sm" onclick="state.discSel.clear();renderStatus();">선택 해제</button>
+    <span class="note" style="margin:0;">과거 매출·출고 기록은 그대로 남습니다. 화면에서만 감춥니다.</span>
+  </div>`;
+}
+async function applyDisc(on) {
+  const skus = [...state.discSel];
+  if (!skus.length) return;
+  const names = skus.map(s => state.rows.find(r => r.sku === s)?.name || s);
+  if (!confirm(`${skus.length}개를 ${on ? '단종 처리' : '단종 해제'}할까요?\n\n${names.slice(0,8).join('\n')}${names.length>8?`\n… 외 ${names.length-8}개`:''}\n\n※ 기록은 지워지지 않습니다.`)) return;
+  try {
+    const r = await api('setDiscontinued', [session.token, skus, String(on)]);
+    state.discSel.clear();
+    toast(`${r.count}개 ${on ? '단종 처리됨 — 목록에서 숨겨집니다' : '단종 해제됨'}`);
+    await loadPeriod(state.period.from || '', state.period.to || '');
+  } catch(e) { toast(e.message); }
+}
+
 // ---------- 전체 현황 ----------
 function renderStatus() {
   const all = state.rows;
-  const HIDDEN_ST = ['재고없음','데이터부족'];
-  const pills = ['all','발주필요','발주임박','재고적정','과다재고','부진재고','품절','재고없음','데이터부족'];
+  const HIDDEN_ST = ['재고없음','데이터부족','단종'];
+  const pills = ['all','발주필요','발주임박','재고적정','과다재고','부진재고','품절','재고없음','데이터부족','단종'];
   document.getElementById('status-pills').innerHTML = pills.map(p =>
     `<div class="pill ${state.filter.status===p?'active':''}" onclick="state.filter.status='${p}';renderStatus()">${p==='all'?'전체':(HIDDEN_ST.includes(p)?p+'(숨김)':p)} ${p==='all'?all.filter(r=>!HIDDEN_ST.includes(r.status)).length:all.filter(r=>r.status===p).length}</div>`).join('');
   let rows = all.filter(r => state.filter.status==='all' ? !HIDDEN_ST.includes(r.status) : r.status===state.filter.status);
@@ -1347,9 +1391,12 @@ function renderStatus() {
   const avgCell = r => cust
     ? `<td class="num"><b>${fmt(r.avgSel)}</b><div class="name-sub">${fmt(r.outSel)}개 / ${fmt(state.rows0Period.bizDays)}일</div></td>`
     : `<td class="num">${fmt(r.avg7)}</td><td class="num">${fmt(r.avg30)}</td>`;
+  renderDiscBar();
+  const ck = isMgr() ? `<th style="width:30px;"><input type="checkbox" onclick="toggleAllDisc(this)" title="이 목록 전체 선택"></th>` : '';
   document.getElementById('t-status').innerHTML =
-    `<thead><tr>${th2('코드','stdCode','status')}${th2('품목','name','status')}${th2('재고','stock','status',1)}${th2('개당단가','cost','status',1)}${th2('재고금액','stockValue','status',1)}<th>상태</th>${avgHead}${th2('소진예상','daysLeft','status',1)}${th2('권장발주','recommendedOrder','status',1)}<th>최근출고</th></tr></thead><tbody>` +
-    rows.map(r => `<tr onclick="openDetail('${r.sku}')" style="cursor:pointer;">
+    `<thead><tr>${ck}${th2('코드','stdCode','status')}${th2('품목','name','status')}${th2('재고','stock','status',1)}${th2('개당단가','cost','status',1)}${th2('재고금액','stockValue','status',1)}<th>상태</th>${avgHead}${th2('소진예상','daysLeft','status',1)}${th2('권장발주','recommendedOrder','status',1)}<th>최근출고</th></tr></thead><tbody>` +
+    rows.map(r => `<tr onclick="openDetail('${r.sku}')" style="cursor:pointer;${r.discontinued?'opacity:.62;':''}">
+      ${isMgr()?`<td onclick="event.stopPropagation();"><input type="checkbox" class="disc-ck" value="${r.sku}" ${state.discSel.has(r.sku)?'checked':''} onchange="toggleDisc('${r.sku}',this.checked)"></td>`:''}
       <td>${codeCell(r)}</td><td>${nameCell(r)}</td>
       <td class="num">${fmt(r.stock)}</td><td class="num">${fmt(r.cost)}원</td><td class="num">${fmt(r.stockValue)}원</td>
       <td>${badge(r.status)}${poBadge(r.sku, pom)}</td>${avgCell(r)}
@@ -1361,8 +1408,8 @@ function renderStatus() {
 // ---------- 발주 ----------
 function renderReorder() {
   const all = state.rows;
-  const HIDDEN_ST2 = ['재고없음','데이터부족'];
-  const pills = ['all','발주필요','발주임박','품절','과다재고','부진재고','재고적정','재고없음','데이터부족'];
+  const HIDDEN_ST2 = ['재고없음','데이터부족','단종'];
+  const pills = ['all','발주필요','발주임박','품절','과다재고','부진재고','재고적정','재고없음','데이터부족','단종'];
   document.getElementById('reorder-pills').innerHTML = pills.map(p =>
     `<div class="pill ${state.filter.reorder===p?'active':''}" onclick="state.filter.reorder='${p}';renderReorder()">${p==='all'?'전체':(HIDDEN_ST2.includes(p)?p+'(숨김)':p)} ${p==='all'?all.filter(r=>!HIDDEN_ST2.includes(r.status)).length:all.filter(r=>r.status===p).length}</div>`).join('');
   let rows = all.filter(r => state.filter.reorder==='all' ? !HIDDEN_ST2.includes(r.status) : r.status===state.filter.reorder);
