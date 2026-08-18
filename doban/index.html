@@ -578,7 +578,7 @@ const state = { rows: [], products: [], suppliers: [], users: [], pos: [], sales
   sanjiSuppliers: [], sanjiProducts: [], sanjiChanges: [], uploadStatus: null,
   pflow: null, channels: [], dailyCosts: [], health: null, healthCount: 0, requests: null, returns: null, cross: null,
   sanjiRange: { from: null, to: null }, salesBasis: 'ship', salesShip: null, salesOrder: null,
-  discSel: new Set(),
+  discSel: new Set(), supplierDocs: null,
   period: { from: null, to: null }, periodPreset: '', rows0Period: null, bounds: null,
   filter: { status:'all', reorder:'all', pos:'all', supplier:'all', match:'all', sanjiMatch:'all', req:'open' },
   q: { status:'', reorder:'', products:'', match:'', supplier:'', sanjiSup:'', sanjiMatch:'' },
@@ -610,6 +610,7 @@ const dateLabel = ds => ds.slice(5) + '(' + DOW[dowOf(ds)] + ')';
 const dateCell = ds => `<span style="${isWeekend(ds)?'color:var(--red);font-weight:600;':''}">${ds} (${DOW[dowOf(ds)]})</span>`;
 const esc = s => String(s??'').replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const roleName = r => ({admin:'관리자', manager:'매니저', uploader:'업로드 직원', staff:'직원'})[r] || r;
+const BRAND = '도반글로벌';   // 배포 스크립트가 도반글로벌 버전에서 자동 치환
 const isMgr = () => ['admin','manager'].includes(session?.role);
 // 옵션명 끝의 "x 4", "× 3팩", "200g 5개" 같은 배수를 읽는다.
 // 이걸 1로 두면 판매수량이 배수만큼 적게 잡혀 원가·발주가 통째로 틀어진다.
@@ -733,6 +734,7 @@ function showTab(id) {
   if (panelId === 'health') loadHealth();
   if (panelId === 'requests') loadRequests();
   if (panelId === 'returns') loadReturns();
+  if (panelId === 'supplier') loadSupplierDocs().then(renderSuppliers);
   if (panelId === 'cross') loadCross();
 }
 
@@ -1530,7 +1532,7 @@ function renderSuppliers() {
   // 미완료 먼저, 그다음 이름순
   rows = [...rows].sort((a,b) => (supComplete(a)?1:0)-(supComplete(b)?1:0) || String(a.name).localeCompare(String(b.name),'ko'));
   document.getElementById('t-supplier-list').innerHTML =
-    `<thead><tr><th>#</th><th>매입처</th><th>상태</th><th class="num">리드타임</th><th class="num">발주주기</th><th>발주방법</th><th>결제조건</th><th>담당/연락처</th><th class="num">품목수</th></tr></thead><tbody>` +
+    `<thead><tr><th>#</th><th>매입처</th><th>상태</th><th class="num">리드타임</th><th class="num">발주주기</th><th>발주방법</th><th>결제조건</th><th>담당/연락처</th><th class="num">품목수</th><th>서류</th></tr></thead><tbody>` +
     (rows.length ? rows.map((s,i) => { const miss = supMissing(s);
       return `<tr onclick="${isMgr()?`openSupplierEdit(${s.id})`:''}" style="cursor:${isMgr()?'pointer':'default'};">
       <td style="color:var(--sub);">${i+1}</td>
@@ -1543,8 +1545,91 @@ function renderSuppliers() {
       <td>${esc(s.orderMethod||'') || '<span style="color:var(--sub);">-</span>'}</td>
       <td style="max-width:230px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(s.paymentTerms||'') || '<span style="color:var(--sub);">-</span>'}</td>
       <td>${esc(s.contact||'') || '<span style="color:var(--sub);">-</span>'}</td>
-      <td class="num">${s.productCount||0}</td></tr>`; }).join('')
-    : '<tr><td colspan="9" style="text-align:center;color:var(--sub);padding:26px;">해당하는 매입처가 없습니다.</td></tr>') + '</tbody>';
+      <td class="num">${s.productCount||0}</td>
+      <td onclick="event.stopPropagation();">${docCell(s)}</td></tr>`; }).join('')
+    : '<tr><td colspan="10" style="text-align:center;color:var(--sub);padding:26px;">해당하는 매입처가 없습니다.</td></tr>') + '</tbody>';
+}
+
+// ---------- 매입처 서류 (사업자등록증·통장사본) ----------
+// 카톡으로 주고받다 흘리지 않게, 매입처마다 고유 링크를 주고 직접 올리게 한다.
+function vendorLink(token) {
+  const base = location.origin + location.pathname.replace(/[^/]*$/, '');
+  return base + 'vendor.html?v=' + token;
+}
+function docCell(s) {
+  const d = (state.supplierDocs || []).find(x => x.supplierId === s.id);
+  if (!isMgr()) return d?.submitted ? '<span class="badge" style="background:var(--green-bg);color:var(--green);">받음</span>' : '-';
+  if (d?.submitted) {
+    return `<span class="badge" style="background:var(--green-bg);color:var(--green);">받음</span>
+      <button class="btn btn-sm" style="margin-left:4px;" onclick="openVendorDoc(${s.id})">보기</button>`;
+  }
+  return `<button class="btn btn-sm" onclick="copyVendorLink(${s.id}, this)">🔗 링크 보내기</button>`;
+}
+async function loadSupplierDocs(force) {
+  if (state.supplierDocs && !force) return;
+  try { state.supplierDocs = await api('getSupplierDocs', [session.token]); } catch(e) { state.supplierDocs = []; }
+}
+function copyVendorLink(id, btn) {
+  const s = state.suppliers.find(x => x.id === id);
+  const d = (state.supplierDocs || []).find(x => x.supplierId === id);
+  if (!d?.shareToken) { toast('링크를 만들 수 없습니다 — 새로고침 후 다시 시도해주세요'); return; }
+  const url = vendorLink(d.shareToken);
+  const msg = `[${BRAND}] 거래처 정보 등록 요청\n\n`
+    + `안녕하세요, ${BRAND}입니다.\n`
+    + `거래·정산을 위해 아래 정보를 한 번만 남겨주시면 됩니다. 1~2분이면 끝납니다.\n\n`
+    + `▶ ${url}\n\n`
+    + `· 사업자등록증 / 통장 사본 (사진으로 찍어 올리셔도 됩니다)\n`
+    + `· 대금 받으실 계좌\n`
+    + `· 세금계산서 받으실 담당자·이메일\n\n`
+    + `※ 상호는 사업자등록증에 적힌 그대로 부탁드립니다.\n`
+    + `※ 이 링크는 ${esc(s?.name || '')} 전용입니다. 다른 곳에 공유하지 말아주세요.\n`
+    + `※ 내용을 고치실 땐 같은 링크로 다시 들어오시면 됩니다.`;
+  navigator.clipboard.writeText(msg).then(() => {
+    if (btn) { const t = btn.textContent; btn.textContent = '복사됨 ✓'; setTimeout(()=>btn.textContent=t, 1800); }
+  }).catch(()=>{});
+  openModal(`<h2>🔗 ${esc(s?.name || '')} — 링크 보내기</h2>
+    <div class="sub">아래 멘트가 <b>클립보드에 복사됐습니다.</b> 카톡에 그대로 붙여넣으세요.</div>
+    <label style="display:block;font-size:12.5px;font-weight:600;color:var(--sub);margin:12px 0 5px;">보낼 멘트</label>
+    <textarea id="vd-msg" style="width:100%;height:230px;border:1px solid var(--line);border-radius:9px;padding:11px;font-size:12.5px;font-family:inherit;">${esc(msg)}</textarea>
+    <div class="alert" style="margin-top:11px;background:var(--brand-soft);border-color:#FFD8A8;color:#8A4B00;font-size:12.5px;">
+      ⚠ 이 링크는 <b>이 매입처 전용</b>입니다. 링크를 아는 사람은 이 매입처의 정보를 넣고 고칠 수 있으니,
+      단톡방이 아니라 <b>담당자 개인에게</b> 보내주세요.</div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeModal()">닫기</button>
+      <button class="btn btn-primary" onclick="navigator.clipboard.writeText(document.getElementById('vd-msg').value);toast('복사됨');">다시 복사</button>
+    </div>`);
+}
+async function openVendorDoc(id) {
+  const d = (state.supplierDocs || []).find(x => x.supplierId === id);
+  const s = state.suppliers.find(x => x.id === id);
+  if (!d) return;
+  const row = (k, v) => v ? `<tr><td style="color:var(--sub);white-space:nowrap;padding:5px 12px 5px 0;">${k}</td><td style="padding:5px 0;"><b>${esc(v)}</b></td></tr>` : '';
+  openModal(`<h2>📄 ${esc(s?.name || '')} — 받은 서류</h2>
+    <div class="sub">매입처가 ${esc(d.submittedAt || '')} 에 직접 제출한 내용입니다.</div>
+    <table style="margin:12px 0;font-size:13.5px;">
+      ${row('상호', d.bizName)}${row('사업자번호', d.bizNo)}${row('대표자', d.ceo)}
+      ${row('주소', d.bizAddr)}${row('업태/종목', [d.bizType,d.bizItem].filter(Boolean).join(' / '))}
+      ${row('계좌', [d.bank, d.accountNo, d.accountHolder].filter(Boolean).join(' · '))}
+      ${row('담당자', [d.mgrName, d.mgrPhone].filter(Boolean).join(' · '))}
+      ${row('이메일', d.mgrEmail)}${row('남긴 말', d.memo)}
+    </table>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+      ${d.hasDocBiz ? `<button class="btn btn-sm" onclick="viewVendorImage(${id},'biz')">📄 사업자등록증 보기</button>` : '<span class="note" style="margin:0;">사업자등록증 없음</span>'}
+      ${d.hasDocBank ? `<button class="btn btn-sm" onclick="viewVendorImage(${id},'bank')">🏦 통장사본 보기</button>` : '<span class="note" style="margin:0;">통장사본 없음</span>'}
+    </div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeModal()">닫기</button>
+      <button class="btn" onclick="copyVendorLink(${id})">🔗 링크 다시 보내기</button>
+    </div>`);
+}
+async function viewVendorImage(id, kind) {
+  try {
+    const r = await api('getSupplierDocImage', [session.token, String(id), kind]);
+    if (!r?.image) { toast('사진이 없습니다'); return; }
+    openModal(`<h2>${kind==='bank'?'🏦 통장사본':'📄 사업자등록증'}</h2>
+      <img src="${r.image}" style="max-width:100%;border-radius:10px;border:1px solid var(--line);">
+      <div class="modal-actions"><button class="btn" onclick="openVendorDoc(${id})">← 돌아가기</button></div>`);
+  } catch(e) { toast(e.message); }
 }
 function renderMatch() {
   const base = state.products.filter(p=>p.active!==false && p.sku!=='WT001');
