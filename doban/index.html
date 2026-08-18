@@ -323,6 +323,29 @@
     </div>
 
     <!-- 채널 설정·비용입력 -->
+    <!-- 반품일지 -->
+    <div id="panel-returns" class="panel">
+      <div id="pbar-returns"></div>
+      <p class="note" style="margin-top:0;">반품 1건은 <b>돈이 나가는 일</b>입니다. 여기 적으면 순매출·이익에서 자동으로 빠지고,
+        어떤 상품이 왜 되돌아오는지도 쌓입니다.<br>
+        <b>재고는 건드리지 않습니다</b> — 물건이 창고로 돌아오면 물류 마감 파일에 이미 입고로 잡히기 때문입니다 (이중계산 방지).</p>
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;">
+        <button class="btn btn-primary" onclick="openReturnForm()">＋ 반품 등록</button>
+      </div>
+      <div class="cards" id="ret-kpi"></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:16px;" class="board-grid">
+        <div><h3 style="margin:4px 0 10px;font-size:14.5px;">사유별</h3>
+          <div class="tbl-wrap"><div class="table-scroll" style="max-height:300px;"><table id="t-ret-reason"></table></div></div></div>
+        <div><h3 style="margin:4px 0 10px;font-size:14.5px;">판매처별</h3>
+          <div class="tbl-wrap"><div class="table-scroll" style="max-height:300px;"><table id="t-ret-channel"></table></div></div></div>
+      </div>
+      <h3 style="margin:6px 0 4px;font-size:14.5px;">상품별 — 반품률 높은 순</h3>
+      <p class="note" style="margin-top:2px;">반품률 = 반품 수량 ÷ 같은 기간 판매 수량. <b>이 표 맨 위가 지금 회사의 문제</b>입니다.</p>
+      <div class="tbl-wrap" style="margin-bottom:16px;"><div class="table-scroll" style="max-height:340px;"><table id="t-ret-sku"></table></div></div>
+      <h3 style="margin:6px 0 10px;font-size:14.5px;">반품 기록</h3>
+      <div class="tbl-wrap"><div class="table-scroll" style="max-height:420px;"><table id="t-ret-rows"></table></div></div>
+    </div>
+
     <div id="panel-chanset" class="panel">
       <p class="note"><b>판매처별 수수료율</b>과 <b>건당 배송비</b>를 등록하세요. 수수료율을 넣어야 이익 흐름표의 영업이익이 정확해집니다.</p>
       <div class="tbl-wrap" style="margin-bottom:22px;"><div class="table-scroll" style="max-height:400px;"><table id="t-channels"></table></div></div>
@@ -520,7 +543,7 @@ const ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZ
 let session = JSON.parse(localStorage.getItem('doban_session') || 'null');
 const state = { rows: [], products: [], suppliers: [], users: [], pos: [], sales: null, sanji: null,
   sanjiSuppliers: [], sanjiProducts: [], sanjiChanges: [], uploadStatus: null,
-  pflow: null, channels: [], dailyCosts: [], health: null, healthCount: 0, requests: null,
+  pflow: null, channels: [], dailyCosts: [], health: null, healthCount: 0, requests: null, returns: null,
   sanjiRange: { from: null, to: null },
   period: { from: null, to: null }, periodPreset: '', rows0Period: null, bounds: null,
   filter: { status:'all', reorder:'all', pos:'all', supplier:'all', match:'all', sanjiMatch:'all', req:'open' },
@@ -598,6 +621,7 @@ const NAV = [
   { id:'profit', ico:'📈', title:'매출·손익', subs:[
       { id:'sales',    name:'매출 분석' },
       { id:'pflow',    name:'💰 이익 흐름표' },
+      { id:'returns',  name:'↩️ 반품', cnt: () => state.returns?.total?.cnt || 0 },
       { id:'chanset',  name:'채널 설정·비용입력', mgr:true } ] },
   { id:'sanji', ico:'🌾', title:'산지직송',
     cnt: () => state.sanji?.unassigned || 0, subs:[
@@ -673,6 +697,7 @@ function showTab(id) {
   if (panelId === 'logs') loadLogs();
   if (panelId === 'health') loadHealth();
   if (panelId === 'requests') loadRequests();
+  if (panelId === 'returns') loadReturns();
 }
 
 // ---------- 요청함 ----------
@@ -2681,7 +2706,7 @@ async function saveSanjiMatch(pnameEnc, poptEnc) {
 // ---------- 공통 기간 필터 (엑셀 필터처럼 아무 화면에서나) ----------
 // 재고·발주·매출·한눈에보기가 같은 기간을 본다. 한 곳에서 바꾸면 전부 따라간다.
 // 재고 수량 자체는 늘 최신 시점이고, 기간은 "얼마나 팔리느냐"에만 영향을 준다.
-const PERIOD_BARS = ['board','status','reorder','sales'];
+const PERIOD_BARS = ['board','status','reorder','sales','returns'];
 function periodBounds() {
   const p = state.rows0Period || {};
   const b = state.bounds || {};
@@ -2734,14 +2759,123 @@ function setPeriod(kind) {
 async function loadPeriod(from, to) {
   state.period = { from: from || null, to: to || null };
   try {
-    const [dash, sd] = await Promise.all([
+    const [dash, sd, rt] = await Promise.all([
       api('getDashboard', [session.token, from || '', to || '']),
-      api('getSalesDashboard', [session.token, from || '', to || '']) ]);
-    state.rows = dash.rows; state.rows0Period = dash.period; state.sales = sd;
+      api('getSalesDashboard', [session.token, from || '', to || '']),
+      api('getReturns', [session.token, from || '', to || '']) ]);
+    state.rows = dash.rows; state.rows0Period = dash.period; state.sales = sd; state.returns = rt;
     document.getElementById('hd-ref').textContent = dash.refDate || '-';
     renderPeriodBars(); renderKpi(); renderStatus(); renderReorder();
     renderValuation(); renderOutbound(); renderGroups();
-    renderSales(); renderBoard(); renderNav(); renderSubTabs();
+    renderSales(); renderReturns(); renderBoard(); renderNav(); renderSubTabs();
+  } catch(e) { toast(e.message); }
+}
+
+// ---------- 반품일지 ----------
+// 반품 1건 = 돈이 나가는 일. 재고는 물류 마감 파일이 진실이라 여기서 건드리지 않는다.
+const RET_REASONS = ['단순변심','파손','오배송','품질불량','배송지연','기타'];
+async function loadReturns(force) {
+  if (state.returns && !force) { renderReturns(); return; }
+  try {
+    state.returns = await api('getReturns', [session.token, state.period.from || '', state.period.to || '']);
+    renderReturns(); renderNav(); renderSubTabs();
+  } catch(e) { toast(e.message); }
+}
+function renderReturns() {
+  const r = state.returns; if (!r) return;
+  const box = document.getElementById('ret-kpi'); if (!box) return;
+  const t = r.total || {};
+  const ratePct = r.salesQty > 0 ? Math.round((t.qty||0) / r.salesQty * 1000) / 10 : null;
+  const loss = (t.refund||0) + (t.shipCost||0);
+  box.innerHTML = [
+    { label:'반품 건수', value: fmt(t.cnt||0)+'건', foot: fmt(t.qty||0)+'개 (폐기 '+fmt(t.scrapQty||0)+'개)' },
+    { label:'환불액', value: fmt(Math.round(t.refund||0))+'원', foot:'매출에서 빠지는 금액' },
+    { label:'반품 손실 합계', value: fmt(Math.round(loss))+'원', foot:'환불 + 우리 부담 택배비 '+fmt(Math.round(t.shipCost||0))+'원',
+      cls: loss > 0 ? 'v-red' : '' },
+    { label:'반품률 (수량)', value: ratePct!=null ? ratePct+'%' : '-',
+      foot: r.salesQty>0 ? '같은 기간 판매 '+fmt(r.salesQty)+'개 대비' : '판매 자료 없음',
+      cls: ratePct!=null && ratePct >= 3 ? 'v-red' : (ratePct!=null ? 'v-green' : '') },
+  ].map(k=>`<div class="card"><div class="label">${k.label}</div><div class="value ${k.cls||''}" style="font-size:18px;">${k.value}</div><div class="foot">${k.foot}</div></div>`).join('');
+
+  const empty = '<tbody><tr><td style="color:var(--sub);padding:14px;">이 기간에 반품 기록이 없습니다.</td></tr></tbody>';
+  document.getElementById('t-ret-reason').innerHTML = (r.byReason||[]).length
+    ? `<thead><tr><th>사유</th><th class="num">건수</th><th class="num">수량</th><th class="num">환불액</th></tr></thead><tbody>` +
+      r.byReason.map(x=>`<tr><td><b>${esc(x.reason)}</b></td><td class="num">${fmt(x.cnt)}</td>
+        <td class="num">${fmt(x.qty)}</td><td class="num">${fmt(Math.round(x.refund))}원</td></tr>`).join('') + '</tbody>'
+    : empty;
+  document.getElementById('t-ret-channel').innerHTML = (r.byChannel||[]).length
+    ? `<thead><tr><th>판매처</th><th class="num">건수</th><th class="num">수량</th><th class="num">환불액</th></tr></thead><tbody>` +
+      r.byChannel.map(x=>`<tr><td>${esc(x.channel)}</td><td class="num">${fmt(x.cnt)}</td>
+        <td class="num">${fmt(x.qty)}</td><td class="num">${fmt(Math.round(x.refund))}원</td></tr>`).join('') + '</tbody>'
+    : empty;
+  document.getElementById('t-ret-sku').innerHTML = (r.bySku||[]).length
+    ? `<thead><tr><th>품목</th><th class="num">반품 수량</th><th class="num">같은 기간 판매</th><th class="num">반품률</th><th class="num">환불액</th></tr></thead><tbody>` +
+      [...r.bySku].sort((a,b)=>(b.ratePct??-1)-(a.ratePct??-1)).map(x=>`<tr>
+        <td><div class="name-cell">${esc(x.name)}</div><div class="name-sub">${esc(x.sku)}</div></td>
+        <td class="num">${fmt(x.qty)}</td><td class="num">${fmt(x.soldQty)}</td>
+        <td class="num" style="${x.ratePct>=3?'color:var(--red);font-weight:700;':''}">${x.ratePct!=null?x.ratePct+'%':'-'}</td>
+        <td class="num">${fmt(Math.round(x.refund))}원</td></tr>`).join('') + '</tbody>'
+    : empty;
+  document.getElementById('t-ret-rows').innerHTML = (r.rows||[]).length
+    ? `<thead><tr><th>반품일</th><th>판매처</th><th>품목</th><th class="num">수량</th><th>사유</th><th>처리</th><th class="num">환불액</th><th class="num">택배비</th><th>메모</th>${isUploader()?'<th></th>':''}</tr></thead><tbody>` +
+      r.rows.map(x=>`<tr>
+        <td>${x.date}${x.saleDate?`<div class="name-sub">출고 ${x.saleDate}</div>`:''}</td>
+        <td>${esc(x.channel)}</td>
+        <td><div class="name-cell">${esc(x.name)}</div><div class="name-sub">${esc(x.sku)}</div></td>
+        <td class="num">${fmt(x.qty)}</td><td>${esc(x.reason)}</td>
+        <td>${x.disposal==='폐기'?'<span style="color:var(--red);">폐기</span>':'재판매'}</td>
+        <td class="num">${fmt(Math.round(x.refund))}원</td><td class="num">${fmt(Math.round(x.shipCost))}원</td>
+        <td style="font-size:12px;color:var(--sub);">${esc(x.note||'')}</td>
+        ${isUploader()?`<td><button class="btn btn-sm" onclick="openReturnForm(${x.id})">수정</button>
+          ${isMgr()?`<button class="btn btn-sm" onclick="removeReturn(${x.id})">삭제</button>`:''}</td>`:''}
+      </tr>`).join('') + '</tbody>'
+    : empty;
+}
+function openReturnForm(id) {
+  if (!isUploader()) { toast('업로드 권한 이상만 등록할 수 있습니다'); return; }
+  const r = id ? (state.returns?.rows||[]).find(x=>x.id===id) : null;
+  const today = (()=>{ const t=new Date(); t.setMinutes(t.getMinutes()-t.getTimezoneOffset()); return t.toISOString().slice(0,10); })();
+  const chans = [...new Set([...(state.sales?.byChannel||[]).map(c=>c.channel), ...(state.returns?.byChannel||[]).map(c=>c.channel)])].sort();
+  openModal(`<h2>${id?'반품 수정':'반품 등록'}</h2>
+    <div class="sub">고객에게 돌려준 금액과 우리가 낸 택배비를 적으면 이익에서 바로 빠집니다.</div>
+    <datalist id="ret-sku-list">${(state.products||[]).map(p=>`<option value="${p.sku}">${esc(p.name)}</option>`).join('')}</datalist>
+    <div class="form-grid">
+      <div><label>반품 처리일 *</label><input type="date" id="rt-date" value="${r?.date||today}"></div>
+      <div><label>원래 출고일 (알면)</label><input type="date" id="rt-saledate" value="${r?.saleDate||''}"></div>
+      <div><label>판매처 *</label><input id="rt-channel" list="rt-ch-list" value="${esc(r?.channel||'')}" placeholder="예: 집먹-스스">
+        <datalist id="rt-ch-list">${chans.map(c=>`<option value="${esc(c)}">`).join('')}</datalist></div>
+      <div><label>품목 (SKU) *</label><input list="ret-sku-list" id="rt-sku" value="${esc(r?.sku||'')}" placeholder="SKU 입력/검색" oninput="showSkuName(this)">
+        <div class="name-sub" id="rt-skuname"></div></div>
+      <div><label>수량 *</label><input type="number" id="rt-qty" min="1" step="1" value="${r?.qty||1}"></div>
+      <div><label>사유</label><select id="rt-reason">${RET_REASONS.map(x=>`<option ${r?.reason===x?'selected':''}>${x}</option>`).join('')}</select></div>
+      <div><label>물건 처리</label><select id="rt-disposal">
+        <option ${r?.disposal!=='재판매'?'selected':''}>폐기</option>
+        <option ${r?.disposal==='재판매'?'selected':''}>재판매</option></select></div>
+      <div><label>환불액 (원)</label><input type="number" id="rt-refund" min="0" step="1" value="${r?.refund||0}"></div>
+      <div><label>우리 부담 택배비 (원)</label><input type="number" id="rt-ship" min="0" step="1" value="${r?.shipCost||0}"></div>
+      <div style="grid-column:1/-1;"><label>메모</label><input id="rt-note" value="${esc(r?.note||'')}" placeholder="예: 포장 터짐, 판매처 귀책"></div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeModal()">취소</button>
+      <button class="btn btn-primary" onclick="submitReturn(${id||''})">저장</button>
+    </div>`);
+}
+async function submitReturn(id) {
+  const g = x => document.getElementById(x).value;
+  try {
+    await api('saveReturn', [session.token, id ? String(id) : '', {
+      date: g('rt-date'), saleDate: g('rt-saledate'), channel: g('rt-channel').trim(),
+      sku: g('rt-sku').trim(), qty: g('rt-qty'), reason: g('rt-reason'), disposal: g('rt-disposal'),
+      refund: g('rt-refund') || 0, shipCost: g('rt-ship') || 0, note: g('rt-note').trim() }]);
+    closeModal(); toast('반품이 저장됐습니다');
+    state.returns = null; await loadReturns(true);
+    if (state.pflow) { state.pflow = null; if (state.sub['profit']==='pflow') setPfRange('month'); }
+  } catch(e) { toast(e.message); }
+}
+async function removeReturn(id) {
+  if (!confirm('이 반품 기록을 지울까요? 되돌릴 수 없습니다.')) return;
+  try { await api('deleteReturn', [session.token, String(id)]);
+    toast('삭제됐습니다'); state.returns = null; loadReturns(true);
   } catch(e) { toast(e.message); }
 }
 
@@ -2934,7 +3068,7 @@ function renderSales() {
 }
 function showSkuName(inp) {
   const p = state.products.find(x=>x.sku===inp.value.trim());
-  const nm = document.getElementById(inp.id.replace('um-sku','um-nm'));
+  const nm = document.getElementById(inp.id === 'rt-sku' ? 'rt-skuname' : inp.id.replace('um-sku','um-nm'));
   if (nm) nm.textContent = p ? '→ ' + p.name : '';
 }
 function addUmItem(i) {
