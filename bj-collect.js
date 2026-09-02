@@ -49,10 +49,15 @@
   // ⚠ 한 발주모아 계정을 푸드시그널과 도반글로벌이 같이 쓴다 (사용료가 비싸서).
   //   그래서 판매사 이름만 보고 나누면 안 된다. 공급사를 같이 봐야 한다.
   //
-  //   판매사 집먹·푸드            → 푸드시그널 일반 매출
-  //   판매사 도반·위탁 + 공급사 도반- → 도반 내부 거래. 푸드와 무관 (안 가져온다)
-  //   판매사 도반·위탁 + 공급사 도반- 아님 → 푸드가 물건을 댄 것.
-  //                                  도반이 푸드에 갚아야 할 돈 = 공급가 → 미수금
+  //   판매사 집먹·푸드            → 푸드시그널 일반 매출          normal
+  //   판매사 도반·위탁 + 공급사 도반- → 도반 내부 거래              doban_internal
+  //   판매사 도반·위탁 + 공급사 도반- 아님 → 도반이 갚을 돈(공급가)  doban_receivable
+  //
+  // ⚠ 도반 내부 거래도 **버리지 않고 담는다.**
+  //   예전에는 아예 안 가져왔는데, 그러면 발주모아에 있는 주문이 우리 ERP 에 없어서
+  //   "빠진 거냐 일부러 뺀 거냐" 를 아무도 증명할 수 없었다.
+  //   발주모아가 원본이므로 원본에 있는 줄은 다 담고, 성격만 표시해 둔다.
+  //   매출(bj_sales)·미수금(bj_receivables)은 stype 으로 걸러서 보므로 섞이지 않는다.
   var BRAND = opt.brand || 'foodsignal';
   function classify(channel, supplier) {
     var ch = String(channel || ''), sp = String(supplier || '');
@@ -63,7 +68,7 @@
       return (isDobanCh && isDobanSp) ? 'normal' : null;
     }
     if (!isDobanCh) return 'normal';           // 집먹·푸드 = 그냥 우리 매출
-    if (isDobanSp) return null;                 // 도반↔도반 = 우리와 무관
+    if (isDobanSp) return 'doban_internal';     // 도반↔도반 = 우리 매출은 아니다. 그래도 담는다
     return 'doban_receivable';                  // 도반이 팔고 우리가 댐 = 미수금
   }
 
