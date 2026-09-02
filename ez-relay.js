@@ -32,8 +32,8 @@
       var s = JSON.parse(raw);
       hasSession = !!(s && s.token);
     }
-  } catch (e) {
-    /* 읽기 실패하면 아래에서 응답 없음으로 처리된다 */
+  } catch {
+    /* 읽기 실패하면 로그인 없음으로 본다 */
   }
   if (!hasSession) {
     set('EZ_ERROR', { message: 'ERP 로그인이 필요합니다 (브라우저에서 ERP에 로그인해 주세요)' });
@@ -68,7 +68,7 @@
     }
     try {
       window.postMessage({ type: 'EZ_DATA', payload: payload }, window.location.origin);
-    } catch (e) {
+    } catch {
       /* 다음 차례에 다시 던진다 */
     }
   }, 500);
