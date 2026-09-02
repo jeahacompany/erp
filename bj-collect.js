@@ -337,12 +337,18 @@
           },
         };
       }
+      // ⚠ 공급사는 주문이 아니라 **주문상품마다** 다르다.
+      //   한 주문에 공급사가 다른 상품이 섞일 수 있어서 주문 머리에만 두면 마지막 것만 남는다.
+      //   공급사는 "우리가 재고를 대는 상품이냐(재고관리) / 위탁이냐" 를 가르는 기준이라
+      //   줄마다 원문 그대로 보존한다. (대표 확정, 2026-09-03)
       o.items.push({
         lineNo: o.items.length + 1,
         itemNo: r.optionCode || r.goodsCode || null,
         pname: r.pname, popt: r.popt,
         qty: r.qty,
         amount: r.payAmount == null ? 0 : r.payAmount,
+        supplier: r.supplier || null,     // 공급사 원문. 없으면 위탁상품으로 본다
+        goodsCode: r.goodsCode || null,   // 발주모아 상품코드
       });
       // ⚠ 같은 주문에 "같은 옵션·같은 수량·같은 금액" 줄이 두 번 나오는 경우가 있다.
       //   원본을 보면 송장번호가 서로 달라서, 같은 상품을 두 번 내보낸 것(분할출고·재배송)이다.
