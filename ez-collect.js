@@ -13,7 +13,8 @@
   var ERP_ORIGIN = 'https://jeahacompany.github.io';
   var ERP_URL = ERP_ORIGIN + '/erp/data/ez/?receive=1';
   var API = 'https://api.ezstorage.io/';
-  var DAYS = 30; // 입출고·입고를 며칠치 가져올지
+  // 며칠치를 가져올지. 처음 한 번은 길게(예: 95) 잡아 과거를 채우고, 평소에는 30이면 된다.
+  var DAYS = (window.__ezDays && Number(window.__ezDays)) || 30;
 
   if (window.__ezCollectRunning) return;
   window.__ezCollectRunning = true;
@@ -284,16 +285,24 @@
       '  courierInvoices{ num courierName shippingStatus invoiceStatus createdAt' +
       '   finalPackages{ amount productMatch{ productOption{ customerProductCode systemProductCode } } } } } }';
     var range = { from: iso(DAYS), to: new Date().toISOString() };
-    var out = [], skip = 0, total = null;
+    var TAKE = 200;
+    var out = [], skip = 0, total = null, seen = {};
 
+    // ⚠ totalCount 를 끝의 기준으로 쓰면 안 된다.
+    //   송장 수가 아니라서 끝을 지나쳐 같은 것을 또 받는다 (실제로 정확히 2배가 들어왔다).
+    //   받은 줄이 take 보다 적으면 그때가 끝이다.
     function loop() {
       return gql(q, {
-        l: ids.logisticId, s: ids.sellerId, d: range, t: 'CREATED', skip: skip, take: 200,
+        l: ids.logisticId, s: ids.sellerId, d: range, t: 'CREATED', skip: skip, take: TAKE,
       }).then(function (d) {
         var r = d.getCourierInvoices;
         if (total === null) total = r.totalCount;
         var list = r.courierInvoices || [];
+        var added = 0;
         list.forEach(function (x) {
+          if (!x.num || seen[x.num]) return;
+          seen[x.num] = 1;
+          added++;
           out.push({
             invoiceNo: x.num,
             courier: x.courierName,
@@ -311,8 +320,8 @@
           });
         });
         skip += list.length;
-        say('송장 ' + out.length + '/' + total);
-        if (list.length && skip < total) return loop();
+        say('송장 ' + out.length + '건');
+        if (list.length === TAKE && added > 0) return loop();
         return out;
       });
     }
