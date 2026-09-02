@@ -17,6 +17,16 @@
 
   if (window.__ezCollectRunning) return;
   window.__ezCollectRunning = true;
+  // 확장프로그램이 결과를 읽어갈 수 있게 남긴다.
+  window.__ezLastResult = { state: 'running', at: new Date().toISOString() };
+  function finish(ok, msg, counts) {
+    window.__ezLastResult = {
+      state: ok ? 'ok' : 'error',
+      msg: msg,
+      counts: counts || null,
+      at: new Date().toISOString(),
+    };
+  }
 
   // ── 화면에 진행 상황을 띄운다 ──────────────────────────────────────────
   var box = document.createElement('div');
@@ -215,8 +225,11 @@
   // ── 5. 우리 ERP 창을 열어 넘긴다 ──────────────────────────────────────
   function send(payload) {
     say('ERP 창으로 보내는 중…');
-    var w = window.open(ERP_URL, 'erp_ez_receiver');
+    // 확장프로그램이 돌린 경우엔 창을 자동으로 닫게 표시한다.
+    var url = ERP_URL + (window.__ezAuto ? '&auto=1' : '');
+    var w = window.open(url, 'erp_ez_receiver');
     if (!w) {
+      finish(false, '팝업 차단됨');
       done('팝업이 막혔습니다. 주소창 오른쪽에서 팝업을 허용한 뒤 다시 눌러주세요.', true);
       return;
     }
@@ -232,6 +245,7 @@
         window.removeEventListener('message', onMsg);
         clearTimeout(timer);
         var r = e.data.result || {};
+        finish(true, '저장 완료', r);
         done(
           '보냈습니다 · 재고 ' + (r.stock || 0) + '건 · 입출고 ' + (r.moves || 0) +
             '건 · 입고 ' + (r.inbound || 0) + '건'
@@ -239,6 +253,7 @@
       } else if (e.data.type === 'EZ_ERROR') {
         window.removeEventListener('message', onMsg);
         clearTimeout(timer);
+        finish(false, 'ERP: ' + (e.data.message || '알 수 없는 오류'));
         done('ERP 쪽에서 막혔습니다: ' + (e.data.message || '알 수 없는 오류'), true);
       }
     }
@@ -246,6 +261,7 @@
 
     timer = setTimeout(function () {
       window.removeEventListener('message', onMsg);
+      finish(false, 'ERP 창이 응답하지 않음 (ERP 로그인 확인 필요)');
       done('ERP 창이 응답하지 않습니다. ERP에 로그인돼 있는지 확인해주세요.', true);
     }, 90000);
   }
@@ -269,8 +285,10 @@
     .catch(function (e) {
       var m = String((e && e.message) || e);
       if (/승인되지|Unauthorized|401/i.test(m)) {
+        finish(false, 'EZSTORAGE 로그인 풀림');
         done('EZSTORAGE 로그인이 풀렸습니다. 다시 로그인한 뒤 눌러주세요.', true);
       } else {
+        finish(false, m);
         done('읽지 못했습니다: ' + m, true);
       }
     });
