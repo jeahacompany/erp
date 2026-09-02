@@ -263,6 +263,15 @@
         }
         var doc = new DOMParser().parseFromString(html, 'text/html');
         var t = bigTable(doc);
+
+        // 그 날 자료가 정말 0건이면 발주모아는 주문 표를 아예 안 그린다.
+        // "주문이 없습니다" 라고 적어준다. 이건 오류가 아니라 정상이다.
+        // (송장등록일 축에서는 휴일 등으로 0건인 날이 실제로 있다)
+        // 이걸 구조 변경으로 오해하면 그 날에서 수집이 통째로 멈춘다.
+        if (!t && /주문이\s*없습니다/.test(doc.body.innerText)) {
+          return { rows: [], total: 0 };
+        }
+
         if (!t && attempt < PAGE_RETRY) {
           say('응답이 이상해 다시 받는 중… (' + attempt + '/' + PAGE_RETRY + ')');
           return new Promise(function (res) { setTimeout(res, 2000 * attempt); })
