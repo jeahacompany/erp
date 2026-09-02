@@ -299,8 +299,18 @@
         qty: r.qty,
         amount: r.payAmount == null ? 0 : r.payAmount,
       });
-      // 금액은 줄별로 그대로 보존한다 (합산 규칙은 아래에서 판단)
-      o.raw.amounts.pay.push(r.payAmount);
+      // ⚠ 같은 주문에 "같은 옵션·같은 수량·같은 금액" 줄이 두 번 나오는 경우가 있다.
+      //   원본을 보면 송장번호가 서로 달라서, 같은 상품을 두 번 내보낸 것(분할출고·재배송)이다.
+      //   고객은 한 번만 결제했으므로 결제금액을 두 번 더하면 매출이 부풀려진다.
+      //   줄(출고 기록)은 그대로 남기고, 결제금액만 한 번 센다.
+      var payKey = (r.optionCode || '') + '|' + r.qty + '|' + r.payAmount;
+      if (!o.__paySeen) o.__paySeen = {};
+      if (o.__paySeen[payKey]) {
+        o.raw.dupPayLines = (o.raw.dupPayLines || 0) + 1;
+      } else {
+        o.__paySeen[payKey] = 1;
+        o.raw.amounts.pay.push(r.payAmount);
+      }
       o.raw.amounts.consumer += r.consumerAmount || 0;
       o.raw.amounts.seller += r.sellerAmount || 0;
       o.raw.amounts.supply += r.supplyAmount || 0;
@@ -324,7 +334,7 @@
         o.payAmount = pays.reduce(function (a, b) { return a + b; }, 0);
         // 배송비는 고객이 낸 것만 (배송비 칸의 "결제"가 0보다 큰 줄)
         o.shipFee = fees.reduce(function (a, b) { return a + b; }, 0);
-        delete o.raw.amounts.pay; delete o.raw.shipFees.pay;
+        delete o.raw.amounts.pay; delete o.raw.shipFees.pay; delete o.__paySeen;
         return o;
       });
       out.push({ channel: ch, source: 'baljumoa',
