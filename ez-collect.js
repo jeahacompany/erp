@@ -270,6 +270,55 @@
     });
   }
 
+  // ── 4-2. 송장 (실제로 무엇이 나갔나) ──────────────────────────────────
+  //
+  // 이게 발주모아 옵션코드 ↔ 우리 SKU 를 잇는 유일한 근거다.
+  //   발주모아 주문 → 송장번호 → 이 송장 → 실제 출고 SKU → products.sku
+  // 발주모아는 옵션명만 알려주고 우리 SKU 를 모른다. EZ 만 실제로 나간 것을 안다.
+  function fetchInvoices() {
+    say('송장 읽는 중…');
+    var q =
+      'query CI($l:ID!,$s:ID!,$d:DateRange,$t:GetCourierInvoices_InquiryType,$skip:Int,$take:Int){' +
+      ' getCourierInvoices(logisticId:$l, sellerId:$s, inquiryDate:$d, inquiryType:$t, skip:$skip, take:$take){' +
+      '  totalCount' +
+      '  courierInvoices{ num courierName shippingStatus invoiceStatus createdAt' +
+      '   finalPackages{ amount productMatch{ productOption{ customerProductCode systemProductCode } } } } } }';
+    var range = { from: iso(DAYS), to: new Date().toISOString() };
+    var out = [], skip = 0, total = null;
+
+    function loop() {
+      return gql(q, {
+        l: ids.logisticId, s: ids.sellerId, d: range, t: 'CREATED', skip: skip, take: 200,
+      }).then(function (d) {
+        var r = d.getCourierInvoices;
+        if (total === null) total = r.totalCount;
+        var list = r.courierInvoices || [];
+        list.forEach(function (x) {
+          out.push({
+            invoiceNo: x.num,
+            courier: x.courierName,
+            shippingStatus: x.shippingStatus,
+            invoiceStatus: x.invoiceStatus,
+            createdAt: x.createdAt,
+            items: (x.finalPackages || []).map(function (p) {
+              var po = p.productMatch && p.productMatch.productOption;
+              return {
+                sku: po ? po.customerProductCode : null,
+                sysCode: po ? po.systemProductCode : null,
+                qty: p.amount,
+              };
+            }),
+          });
+        });
+        skip += list.length;
+        say('송장 ' + out.length + '/' + total);
+        if (list.length && skip < total) return loop();
+        return out;
+      });
+    }
+    return loop();
+  }
+
   // ── 5. 우리 ERP 창을 열어 넘긴다 ──────────────────────────────────────
   // 사람이 즐겨찾기를 눌러서 온 경우에만 쓴다.
   // 클릭이 있으므로 창을 열어도 팝업 차단에 걸리지 않는다.
@@ -337,10 +386,13 @@
     .then(function (r) { payload.moves = r; })
     .then(fetchInbound)
     .then(function (r) { payload.inbound = r; })
+    .then(fetchInvoices)
+    .then(function (r) { payload.invoices = r; })
     .then(function () {
       say(
         '읽기 완료 · 상품 ' + payload.products.length + ' · 재고 ' + payload.stock.length +
-          ' · 입출고 ' + payload.moves.length + ' · 입고 ' + payload.inbound.length
+          ' · 입출고 ' + payload.moves.length + ' · 입고 ' + payload.inbound.length +
+          ' · 송장 ' + payload.invoices.length
       );
       window.__ezPayload = payload;
       if (window.__ezAuto) {
