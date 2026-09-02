@@ -224,45 +224,50 @@
 
   // ── 5. 우리 ERP 창을 열어 넘긴다 ──────────────────────────────────────
   function send(payload) {
-    say('ERP 창으로 보내는 중…');
-    // 확장프로그램이 돌린 경우엔 창을 자동으로 닫게 표시한다.
-    var url = ERP_URL + (window.__ezAuto ? '&auto=1' : '');
-    var w = window.open(url, 'erp_ez_receiver');
-    if (!w) {
-      finish(false, '팝업 차단됨');
-      done('팝업이 막혔습니다. 주소창 오른쪽에서 팝업을 허용한 뒤 다시 눌러주세요.', true);
-      return;
-    }
+    say('ERP로 보내는 중…');
+    // 창(window.open)을 쓰지 않는다. 클릭 없이 열면 팝업 차단에 걸린다.
+    // 숨은 프레임은 팝업이 아니라서 막히지 않는다.
+    // 프레임 안의 ERP 화면은 자기 로그인을 그대로 쓰므로, 저장은 ERP 가 한다.
+    var frame = document.createElement('iframe');
+    frame.style.cssText = 'position:fixed;width:0;height:0;border:0;left:-9999px;top:-9999px';
+    frame.src = ERP_URL + '&auto=1';
+    document.body.appendChild(frame);
+    var w = frame.contentWindow;
+
     var sent = false;
     var timer = null;
+    function cleanup() {
+      window.removeEventListener('message', onMsg);
+      clearTimeout(timer);
+      if (frame.parentNode) frame.parentNode.removeChild(frame);
+    }
 
     function onMsg(e) {
       if (e.origin !== ERP_ORIGIN || !e.data) return;
       if (e.data.type === 'EZ_READY' && !sent) {
         sent = true;
-        w.postMessage({ type: 'EZ_DATA', payload: payload }, ERP_ORIGIN);
+        (e.source || w).postMessage({ type: 'EZ_DATA', payload: payload }, ERP_ORIGIN);
       } else if (e.data.type === 'EZ_SAVED') {
-        window.removeEventListener('message', onMsg);
-        clearTimeout(timer);
         var r = e.data.result || {};
+        cleanup();
         finish(true, '저장 완료', r);
         done(
           '보냈습니다 · 재고 ' + (r.stock || 0) + '건 · 입출고 ' + (r.moves || 0) +
             '건 · 입고 ' + (r.inbound || 0) + '건'
         );
       } else if (e.data.type === 'EZ_ERROR') {
-        window.removeEventListener('message', onMsg);
-        clearTimeout(timer);
-        finish(false, 'ERP: ' + (e.data.message || '알 수 없는 오류'));
-        done('ERP 쪽에서 막혔습니다: ' + (e.data.message || '알 수 없는 오류'), true);
+        var m = e.data.message || '알 수 없는 오류';
+        cleanup();
+        finish(false, 'ERP: ' + m);
+        done('ERP 쪽에서 막혔습니다: ' + m, true);
       }
     }
     window.addEventListener('message', onMsg);
 
     timer = setTimeout(function () {
-      window.removeEventListener('message', onMsg);
-      finish(false, 'ERP 창이 응답하지 않음 (ERP 로그인 확인 필요)');
-      done('ERP 창이 응답하지 않습니다. ERP에 로그인돼 있는지 확인해주세요.', true);
+      cleanup();
+      finish(false, 'ERP 가 응답하지 않음 (ERP 로그인 확인 필요)');
+      done('ERP가 응답하지 않습니다. ERP에 로그인돼 있는지 확인해주세요.', true);
     }, 90000);
   }
 
@@ -280,16 +285,9 @@
         '읽기 완료 · 상품 ' + payload.products.length + ' · 재고 ' + payload.stock.length +
           ' · 입출고 ' + payload.moves.length + ' · 입고 ' + payload.inbound.length
       );
-      if (window.__ezAuto) {
-        // 확장프로그램이 돌린 경우엔 창을 열지 않는다.
-        // 클릭이 없어서 window.open 이 팝업 차단에 걸린다.
-        // 읽은 것만 남겨두고, ERP 로 넘기는 일은 확장프로그램이 한다.
-        window.__ezPayload = payload;
-        finish(true, '읽기 완료 (ERP 전달은 확장프로그램이 함)');
-        window.__ezLastResult.state = 'collected';
-        done('읽었습니다. ERP로 넘깁니다…');
-        return;
-      }
+      // 자동이든 수동이든 같은 길로 보낸다.
+      // 숨은 프레임을 쓰므로 클릭이 없어도 막히지 않는다.
+      window.__ezPayload = payload;
       send(payload);
     })
     .catch(function (e) {
