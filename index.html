@@ -1808,13 +1808,17 @@ function renderProducts() {
   if (q) rows = rows.filter(r => (r.name+r.sku+(r.stdCode||'')).toLowerCase().includes(q));
   rows = applySort(rows, 'products', 'stdCode', 1);
   document.getElementById('t-products').innerHTML =
-    `<thead><tr>${th2('코드','stdCode','products')}${th2('품목','name','products')}${th2('카테고리','category','products')}<th class="num">원가</th><th class="num">판매가</th><th class="num">리드타임</th><th class="num">직접 안전재고</th><th>매입처</th><th>사용</th></tr></thead><tbody>` +
+    `<thead><tr>${th2('코드','stdCode','products')}${th2('품목','name','products')}${th2('카테고리','category','products')}${th2('유형','productType','products')}<th>규격</th><th class="num">중량</th><th class="num">원가</th><th class="num">판매가</th><th>세금</th><th class="num">리드타임</th><th class="num">직접 안전재고</th><th>매입처</th><th>재고관리</th></tr></thead><tbody>` +
     rows.map(p => { const sup = state.suppliers.find(x=>x.id===p.supplierId);
       return `<tr onclick="openProductEdit('${p.sku}')" style="cursor:pointer;">
       <td><span class="code main">${esc(p.stdCode||'-')}</span></td>
       <td><div class="name-cell">${esc(p.name)}</div><div class="name-sub">${esc(p.sku)}</div></td>
       <td>${esc(p.category||'')}</td>
+      <td>${(p.productType&&p.productType!=='완제품')?`<span class="pill">${esc(p.productType)}</span>`:'<span style="color:var(--sub);">완제품</span>'}</td>
+      <td>${esc(p.spec||'')||'<span style="color:var(--sub);">-</span>'}</td>
+      <td class="num">${p.weightG!=null?fmt(p.weightG)+'g':'<span style="color:var(--sub);">-</span>'}</td>
       <td class="num">${fmt(p.cost)}</td><td class="num">${p.salePrice!=null?fmt(p.salePrice):'<span style="color:var(--red);font-size:12px;">미입력</span>'}</td>
+      <td>${p.taxable===false?'<span style="color:#2563eb;">면세</span>':'<span style="color:var(--sub);">과세</span>'}</td>
       <td class="num">${p.leadTimeDays?p.leadTimeDays+'일':'<span style="color:var(--sub);">-</span>'}</td>
       <td class="num">${p.safetyOverride!=null?fmt(p.safetyOverride):'-'}</td>
       <td>${esc(sup?.name||p.supplierName||'')}</td><td>${p.active?'✅':'⛔'}</td></tr>`; }).join('') + '</tbody>';
@@ -1828,8 +1832,14 @@ function openProductEdit(sku) {
     <div class="form-grid">
       <div><label>품목명</label><input id="pe-name" value="${esc(p.name)}"></div>
       <div><label>카테고리</label><select id="pe-cat">${['곱창류','고기류','양념류','탕류','기타류'].map(c=>`<option ${p.category===c?'selected':''}>${c}</option>`).join('')}</select></div>
+      <div><label>상품 유형</label><select id="pe-type">${['완제품','원재료','부자재','세트'].map(t=>`<option ${(p.productType||'완제품')===t?'selected':''}>${t}</option>`).join('')}</select></div>
+      <div><label>규격</label><input id="pe-spec" value="${esc(p.spec||'')}" placeholder="예: 300g"></div>
+      <div><label>단위</label><select id="pe-unitname">${['개','박스','kg','g','팩'].map(u=>`<option ${(p.unit||'개')===u?'selected':''}>${u}</option>`).join('')}</select></div>
+      <div><label>중량(g)</label><input id="pe-weight" type="number" value="${p.weightG??''}" placeholder="배송비 계산용"></div>
+      <div><label>바코드</label><input id="pe-barcode" value="${esc(p.barcode||'')}"></div>
       <div><label>개당 원가</label><input id="pe-cost" type="number" value="${p.cost??''}"></div>
       <div><label>판매가</label><input id="pe-price" type="number" value="${p.salePrice??''}"></div>
+      <div><label>세금</label><select id="pe-tax"><option value="true" ${p.taxable!==false?'selected':''}>과세 (부가세 10% 별도)</option><option value="false" ${p.taxable===false?'selected':''}>면세</option></select></div>
       <div><label>품목 리드타임(일)</label><input id="pe-lead" type="number" value="${p.leadTimeDays??''}" placeholder="비우면 매입처 기본값"></div>
       <div><label>발주 단위(박스 입수)</label><input id="pe-unit" type="number" value="${p.orderUnit??''}" placeholder="예: 20 (20개 단위로 발주)"></div>
       <div><label>직접 안전재고</label><input id="pe-safe" type="number" value="${p.safetyOverride??''}" placeholder="비우면 자동계산"></div>
@@ -1839,8 +1849,13 @@ function openProductEdit(sku) {
         ${[...new Map(state.products.filter(x=>x.groupId).map(x=>[x.groupId, x.groupName])).entries()].map(([id,nm])=>`<option value="${id}" ${p.groupId==id?'selected':''}>${esc(nm)}</option>`).join('')}
         <option value="__new">➕ 새 그룹 만들기</option>
       </select></div>
-      <div><label>사용 여부</label><select id="pe-active"><option value="true" ${p.active?'selected':''}>사용</option><option value="false" ${!p.active?'selected':''}>중지</option></select></div>
+      <div><label>재고 관리</label><select id="pe-active"><option value="true" ${p.active?'selected':''}>재고 추적 (창고 물건)</option><option value="false" ${!p.active?'selected':''}>추적 안 함 (위탁·직배송)</option></select></div>
+      <div><label>기본 창고</label><input id="pe-wh" value="${esc(p.defaultWarehouse||'')}" placeholder="비우면 이천"></div>
       <div class="full"><label>메모</label><input id="pe-memo" value="${esc(p.memo||'')}"></div>
+      <div class="full note" style="margin-top:-4px;">
+        ※ <b>재고 관리</b>는 창고에 실물이 있는지입니다. 더 이상 안 쓰는 품목은
+        재고 현황에서 <b>단종</b> 처리하세요 (기록은 남고 목록에서만 숨겨집니다).
+      </div>
     </div>
     <div class="m-actions">
       <button class="btn" onclick="openDetail('${p.sku}')">📈 입출고 이력</button>
@@ -1862,7 +1877,15 @@ async function saveProduct(sku) {
       orderUnit: document.getElementById('pe-unit').value,
       safetyOverride: document.getElementById('pe-safe').value,
       active: document.getElementById('pe-active').value === 'true',
-      memo: document.getElementById('pe-memo').value }]);
+      memo: document.getElementById('pe-memo').value,
+      // 043 에서 늘린 항목들
+      productType: document.getElementById('pe-type').value,
+      spec: document.getElementById('pe-spec').value,
+      unit: document.getElementById('pe-unitname').value,
+      weightG: document.getElementById('pe-weight').value,
+      barcode: document.getElementById('pe-barcode').value,
+      taxable: document.getElementById('pe-tax').value === 'true',
+      defaultWarehouse: document.getElementById('pe-wh').value }]);
     await api('setProductSupplier', [session.token, sku, document.getElementById('pe-sup').value || '']);
     let gv = document.getElementById('pe-group').value;
     if (gv === '__new' && window._newGroupName) {
