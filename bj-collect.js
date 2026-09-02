@@ -36,6 +36,16 @@
   var DAYTYPE = opt.daytype || 'order_date';
   var DRY = !!opt.dryRun;
 
+  // ⚠ 한 발주모아 계정에 푸드시그널(집먹·푸드)과 도반글로벌(도반·위탁) 판매처가 같이 있다.
+  //   우리 ERP 는 erp / doban 스키마가 완전히 분리돼 있으므로 섞어 넣으면 안 된다.
+  //   기본값은 푸드시그널 것만 가져온다. 도반은 doban 쪽에서 따로 받는다.
+  var BRANDS = {
+    foodsignal: /^(집먹|푸드)/,
+    doban: /^(도반|위탁-도반)/,
+  };
+  var BRAND = opt.brand || 'foodsignal';
+  var KEEP = BRANDS[BRAND] || BRANDS.foodsignal;
+
   window.__bjResult = { state: 'running', at: new Date().toISOString() };
   function finish(state, msg, extra) {
     window.__bjResult = Object.assign(
@@ -217,8 +227,11 @@
   //    그래서 주문 키는 반드시 "판매처 주문번호" 를 쓴다.
   function build(rows) {
     var byCh = {};
+    var skipped = {};
     rows.forEach(function (r) {
       var ch = (r.channel || '미지정').trim();
+      // 다른 회사(브랜드) 판매처는 아예 담지 않는다.
+      if (!KEEP.test(ch)) { skipped[ch] = (skipped[ch] || 0) + 1; return; }
       byCh[ch] = byCh[ch] || {};
       var key = r.srcNo;
       var o = byCh[ch][key];
@@ -283,6 +296,7 @@
                  filename: '발주모아 ' + (DATE_FROM || '') + '~' + (DATE_TO || ''),
                  rows: arr });
     });
+    window.__bjSkipped = skipped;
     return out;
   }
 
@@ -343,6 +357,11 @@
         return a + p.rows.filter(function (o) { return o.raw.amounts.payRule === 'AMBIGUOUS_IDENTICAL'; }).length;
       }, 0),
       from: DATE_FROM, to: DATE_TO, daytype: DAYTYPE,
+      brand: BRAND,
+      skippedOtherBrand: Object.keys(window.__bjSkipped || {}).reduce(
+        function (a, k) { return a + window.__bjSkipped[k]; }, 0),
+      skippedChannels: Object.keys(window.__bjSkipped || {}).map(
+        function (k) { return k + ':' + window.__bjSkipped[k]; }),
     };
     window.__bjStat = stat;
     if (DRY) {
