@@ -311,7 +311,7 @@
     function off() {
       window.removeEventListener('message', onMsg);
       clearTimeout(timer);
-      try { if (opt.winName) w.close(); } catch (e) { /* 이미 닫혔으면 넘어간다 */ }
+      try { if (opt.winName) w.close(); } catch { /* 이미 닫혔으면 넘어간다 */ }
     }
     function onMsg(e) {
       if (e.origin !== ERP_ORIGIN || !e.data) return;
@@ -321,7 +321,7 @@
       } else if (e.data.type === 'BJ_SAVED') {
         off(); finish('ok', '저장 완료', { result: e.data.result, stat: stat });
         var r = e.data.result || {};
-        if (typeof window.__bjNext === 'function') { try { window.__bjNext(); } catch (e3) { /* 무시 */ } }
+        if (typeof window.__bjNext === 'function') { try { window.__bjNext(); } catch { /* 무시 */ } }
         done('저장했습니다 · 신규 ' + (r.new || 0) + ' · 갱신 ' + (r.dup || 0) + ' · 잠김 ' + (r.locked || 0));
       } else if (e.data.type === 'EZ_ERROR' || e.data.type === 'BJ_ERROR') {
         off(); finish('error', 'ERP: ' + (e.data.message || '오류'));
