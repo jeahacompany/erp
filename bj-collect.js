@@ -82,6 +82,19 @@
   var num = function (s) { var m = String(s == null ? '' : s).replace(/[^0-9.-]/g, ''); return m === '' ? null : Number(m); };
   function pick(s, re) { var m = String(s || '').match(re); return m ? m[1] : null; }
 
+  // 전화번호 찾기.
+  // 국번 3자리까지 허용(0505·0507 안심번호), 숫자 한가운데서 시작하지 못하게 막는다.
+  // 반환: { value, index } — index 는 번호가 시작하는 위치 (이름을 자르는 데 쓴다)
+  function matchPhone(s) {
+    var str = String(s || '');
+    var re = /(^|[^0-9])(0\d{1,3}[-\s]?\d{3,4}[-\s]?\d{4})(?![0-9])/;
+    var m = str.match(re);
+    if (!m) return null;
+    var lead = m[1] || '';
+    var start = m.index + lead.length;
+    return { value: m[2], index: start };
+  }
+
   // 셀 안의 줄들을 나눈다 (<br> 이나 블록 요소 기준)
   function lines(cell) {
     if (!cell) return [];
@@ -137,6 +150,12 @@
     var c6 = g(6), c8 = g(8), c9 = g(9), c10 = g(10);
 
     // 주문자 / 수령인 — 줄 단위로 나눠 읽는다
+    //
+    // ⚠ 전화번호를 잘못 자르면 이름이 망가진다.
+    //   안심번호(0505-1234-5678, 0507-…)는 국번이 4자리다.
+    //   예전 정규식이 \d{1,2} 까지만 봐서 "0505-1234-5678" 을
+    //   "05" + "05-1234-5678" 로 잘랐고, 앞의 "05" 가 이름으로 들어갔다 (1,389건).
+    //   그래서 국번을 3자리까지 허용하고, 숫자 한가운데서 시작하지 못하게 막는다.
     var L4 = lines(c[4]);
     var buyerName = L4[0] || '';
     var buyerPhone = '';
@@ -144,21 +163,21 @@
     var recvPhone = '';
     var ph = [];
     for (var i = 0; i < L4.length; i++) {
-      var p = L4[i].match(/0\d{1,2}[- ]?\d{3,4}[- ]?\d{4}/);
-      if (p) ph.push({ i: i, v: p[0] });
+      var p = matchPhone(L4[i]);
+      if (p) ph.push({ i: i, v: p.value, at: p.index });
     }
     if (ph.length >= 1) { buyerPhone = ph[0].v; }
     if (ph.length >= 2) { recvPhone = ph[1].v; }
-    // 이름은 전화번호 줄 바로 앞(또는 같은 줄 앞부분)
-    function nameNear(k) {
+    // 이름은 전화번호 앞부분. 앞이 비면 그 위 줄을 쓴다.
+    function nameNear(k, at) {
       if (k == null) return '';
       var s = L4[k] || '';
-      var cut = s.split(/0\d{1,2}[- ]?\d{3,4}[- ]?\d{4}/)[0].trim();
+      var cut = (at > 0 ? s.slice(0, at) : '').trim();
       if (cut) return cut;
       return (L4[k - 1] || '').trim();
     }
-    if (ph.length >= 1) buyerName = nameNear(ph[0].i) || buyerName;
-    if (ph.length >= 2) recvName = nameNear(ph[1].i);
+    if (ph.length >= 1) buyerName = nameNear(ph[0].i, ph[0].at) || buyerName;
+    if (ph.length >= 2) recvName = nameNear(ph[1].i, ph[1].at);
     if (!recvName && L4.length > 1) recvName = L4[L4.length - 1];
 
     var c5 = g(5);
@@ -399,6 +418,18 @@
       });
     }
     return loop(1).then(function () {
+      // 저장 전 자기검사 — 값이 망가졌으면 넣지 않는다.
+      // (안심번호를 잘못 잘라 이름이 "05" 로 들어간 적이 있다)
+      var bad = all.filter(function (r) {
+        return !r.buyerName || /^\d+$/.test(r.buyerName) || r.buyerName.length > 20;
+      });
+      if (all.length && bad.length / all.length > 0.02) {
+        var e = new Error('이름이 이상한 줄이 ' + bad.length + '/' + all.length +
+                          ' 입니다. 읽는 방식이 틀렸을 수 있어 저장하지 않았습니다.');
+        e.code = 'HTML_STRUCTURE_CHANGED';
+        throw e;
+      }
+
       var payloads = build(all);
       var stat = {
         rowsSeen: all.length, totalReported: total,
