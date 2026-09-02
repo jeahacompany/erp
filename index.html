@@ -509,6 +509,14 @@
     </div>
 
     <!-- 직원 -->
+    <!-- 권한 관리 -->
+    <div id="panel-rbac" class="panel">
+      <p class="note">역할마다 무엇을 할 수 있는지 여기서 켜고 끕니다. 체크를 바꾸면 <b>바로 저장</b>되고,
+        해당 역할로 로그인한 직원은 <b>다음 로그인부터</b> 적용됩니다.<br>
+        <b>관리자</b>는 항상 모든 권한을 가지므로 바꿀 수 없습니다.</p>
+      <div id="rbac-body"><p class="note">불러오는 중...</p></div>
+    </div>
+
     <div id="panel-users" class="panel">
       <div class="toolbar"><button class="btn btn-primary" onclick="openUserModal()">+ 직원 추가</button></div>
       <div class="tbl-wrap"><div class="table-scroll"><table id="t-users"></table></div></div>
@@ -578,7 +586,7 @@ const state = { rows: [], products: [], suppliers: [], users: [], pos: [], sales
   sanjiSuppliers: [], sanjiProducts: [], sanjiChanges: [], uploadStatus: null,
   pflow: null, channels: [], dailyCosts: [], health: null, healthCount: 0, requests: null, returns: null, cross: null,
   sanjiRange: { from: null, to: null }, salesBasis: 'ship', salesShip: null, salesOrder: null,
-  discSel: new Set(), supplierDocs: null,
+  discSel: new Set(), supplierDocs: null, rbac: null,
   period: { from: null, to: null }, periodPreset: '', rows0Period: null, bounds: null,
   filter: { status:'all', reorder:'all', pos:'all', supplier:'all', match:'all', sanjiMatch:'all', req:'open' },
   q: { status:'', reorder:'', products:'', match:'', supplier:'', sanjiSup:'', sanjiMatch:'' },
@@ -678,6 +686,7 @@ const NAV = [
       { id:'products', name:'품목 관리' },
       { id:'health',   name:'데이터 점검', cnt: () => state.healthCount },
       { id:'users',    name:'직원 계정', admin:true },
+      { id:'rbac',     name:'권한 관리', admin:true },
       { id:'logs',     name:'작업 기록', admin:true } ] },
 ];
 const navVisible = n => (!n.mgr || isMgr()) && (!n.up || isUploader()) && (!n.admin || session.role==='admin');
@@ -731,6 +740,7 @@ function showTab(id) {
     if (!state.sales) { loadSales().then(renderBoard); } else { renderBoard(); }
   }
   if (panelId === 'logs') loadLogs();
+  if (panelId === 'rbac') loadRbac();
   if (panelId === 'health') loadHealth();
   if (panelId === 'requests') loadRequests();
   if (panelId === 'returns') loadReturns();
@@ -1330,6 +1340,48 @@ function renderKpi() {
   else al.style.display='none';
 }
 function jumpToReorder(f) { state.filter.reorder = f==='all'?'all':f; showTab('reorder'); renderReorder(); }
+
+// ---------- 권한 관리 (역할 × 권한) ----------
+// 역할이 코드에 박혀 있으면 "이 직원만 원가 빼고" 같은 요구를 못 받는다. 표로 뺐다.
+async function loadRbac(force) {
+  const box = document.getElementById('rbac-body');
+  if (state.rbac && !force) { renderRbac(); return; }
+  if (box) box.innerHTML = '<p class="note">불러오는 중...</p>';
+  try { state.rbac = await api('getRbac', [session.token]); renderRbac(); }
+  catch(e) { if (box) box.innerHTML = `<div class="alert">❌ ${esc(e.message)}</div>`; }
+}
+function renderRbac() {
+  const r = state.rbac; const box = document.getElementById('rbac-body');
+  if (!r || !box) return;
+  const has = (role, perm) => (r.grants || []).some(g => g.role === role && g.perm === perm);
+  const cats = [...new Set(r.permissions.map(p => p.category))];
+  const roles = r.roles;
+  box.innerHTML = `<div class="tbl-wrap"><div class="table-scroll">
+    <table><thead><tr>
+      <th style="min-width:190px;">권한</th>
+      ${roles.map(x=>`<th class="num" style="min-width:110px;">${esc(x.name)}
+        <div class="name-sub" style="font-weight:400;">${x.isAdmin ? '전부 허용' : fmt(x.userCount)+'명'}</div></th>`).join('')}
+    </tr></thead><tbody>
+    ${cats.map(c => `
+      <tr><td colspan="${roles.length+1}" style="background:var(--bg,#F7F8FA);font-weight:700;font-size:12.5px;color:var(--sub);">${esc(c)}</td></tr>
+      ${r.permissions.filter(p=>p.category===c).map(p=>`<tr>
+        <td>${esc(p.name)}<div class="name-sub">${esc(p.code)}</div></td>
+        ${roles.map(x=>`<td class="num">
+          <input type="checkbox" ${x.isAdmin || has(x.code,p.code) ? 'checked' : ''} ${x.isAdmin ? 'disabled title="관리자는 항상 전부 허용"' : ''}
+            onchange="setRolePerm('${x.code}','${p.code}',this.checked,this)" style="width:16px;height:16px;">
+        </td>`).join('')}
+      </tr>`).join('')}
+    `).join('')}
+    </tbody></table></div></div>`;
+}
+async function setRolePerm(role, perm, on, el) {
+  try {
+    await api('setRolePerm', [session.token, role, perm, String(on)]);
+    if (on) state.rbac.grants.push({ role, perm });
+    else state.rbac.grants = state.rbac.grants.filter(g => !(g.role===role && g.perm===perm));
+    toast(`${role} — ${perm} ${on ? '허용' : '차단'}`);
+  } catch(e) { toast(e.message); if (el) el.checked = !on; }
+}
 
 // ---------- 단종(취급중지) 처리 ----------
 // 안 파는 품목이 발주 추천에 계속 떠서 목록을 어지럽힌다.
