@@ -36,15 +36,26 @@
   var DAYTYPE = opt.daytype || 'order_date';
   var DRY = !!opt.dryRun;
 
-  // ⚠ 한 발주모아 계정에 푸드시그널(집먹·푸드)과 도반글로벌(도반·위탁) 판매처가 같이 있다.
-  //   우리 ERP 는 erp / doban 스키마가 완전히 분리돼 있으므로 섞어 넣으면 안 된다.
-  //   기본값은 푸드시그널 것만 가져온다. 도반은 doban 쪽에서 따로 받는다.
-  var BRANDS = {
-    foodsignal: /^(집먹|푸드)/,
-    doban: /^(도반|위탁-도반)/,
-  };
+  // ⚠ 한 발주모아 계정을 푸드시그널과 도반글로벌이 같이 쓴다 (사용료가 비싸서).
+  //   그래서 판매사 이름만 보고 나누면 안 된다. 공급사를 같이 봐야 한다.
+  //
+  //   판매사 집먹·푸드            → 푸드시그널 일반 매출
+  //   판매사 도반·위탁 + 공급사 도반- → 도반 내부 거래. 푸드와 무관 (안 가져온다)
+  //   판매사 도반·위탁 + 공급사 도반- 아님 → 푸드가 물건을 댄 것.
+  //                                  도반이 푸드에 갚아야 할 돈 = 공급가 → 미수금
   var BRAND = opt.brand || 'foodsignal';
-  var KEEP = BRANDS[BRAND] || BRANDS.foodsignal;
+  function classify(channel, supplier) {
+    var ch = String(channel || ''), sp = String(supplier || '');
+    var isDobanCh = /^(도반|위탁)/.test(ch);
+    var isDobanSp = /^도반-/.test(sp);
+    if (BRAND === 'doban') {
+      // 도반 장부: 도반이 팔고 도반이 댄 것만
+      return (isDobanCh && isDobanSp) ? 'normal' : null;
+    }
+    if (!isDobanCh) return 'normal';           // 집먹·푸드 = 그냥 우리 매출
+    if (isDobanSp) return null;                 // 도반↔도반 = 우리와 무관
+    return 'doban_receivable';                  // 도반이 팔고 우리가 댐 = 미수금
+  }
 
   window.__bjResult = { state: 'running', at: new Date().toISOString() };
   function finish(state, msg, extra) {
@@ -230,8 +241,9 @@
     var skipped = {};
     rows.forEach(function (r) {
       var ch = (r.channel || '미지정').trim();
-      // 다른 회사(브랜드) 판매처는 아예 담지 않는다.
-      if (!KEEP.test(ch)) { skipped[ch] = (skipped[ch] || 0) + 1; return; }
+      var kind = classify(ch, r.supplier);
+      if (!kind) { skipped[ch] = (skipped[ch] || 0) + 1; return; }
+      r.settleType = kind;
       byCh[ch] = byCh[ch] || {};
       var key = r.srcNo;
       var o = byCh[ch][key];
@@ -252,6 +264,10 @@
             payMethod: r.payMethod, supplier: r.supplier,
             courier: r.courier, invoiceNo: r.invoiceNo, invoiceAt: r.invoiceAt,
             orderState: r.orderState, csText: r.csText,
+            // 매출 인식은 "송장 등록일" 기준으로 본다 (대표 확정, 2026-09-02).
+            revenueDate: r.invoiceAt ? String(r.invoiceAt).slice(0, 10) : null,
+            // normal = 우리 매출 / doban_receivable = 도반이 우리에게 갚을 돈(공급가)
+            settleType: r.settleType,
             amounts: { pay: [], consumer: 0, seller: 0, supply: 0 },
             shipFees: { pay: [], seller: 0, supply: 0 },
           },
@@ -281,13 +297,13 @@
         var o = byCh[ch][k];
         var pays = o.raw.amounts.pay.filter(function (x) { return x != null; });
         var fees = o.raw.shipFees.pay.filter(function (x) { return x != null; });
-        var uniq = pays.filter(function (v, i, a) { return a.indexOf(v) === i; });
-        // 줄이 여러 개인데 결제금액이 전부 같으면 "주문 전체 금액이 반복된 것"일 수 있다.
-        // 확정 전까지는 합치지 않고 표시만 남긴다.
-        o.raw.amounts.payRule = (pays.length > 1 && uniq.length === 1) ? 'AMBIGUOUS_IDENTICAL' : 'SUM_OF_LINES';
+        // 결제금액은 "줄별 실제 결제액"이다. 그래서 합친다.
+        // (2026-08-20~22 실측: 다품목 주문 362건 중 결제금액이 같은 건 2건뿐이고,
+        //  그 2건도 소비자가 대비 합산이 맞았다. 주문 전체금액 반복이 아니다)
+        o.raw.amounts.payRule = 'SUM_OF_LINES';
         o.raw.amounts.payLines = pays;
-        o.payAmount = (o.raw.amounts.payRule === 'AMBIGUOUS_IDENTICAL')
-          ? uniq[0] : pays.reduce(function (a, b) { return a + b; }, 0);
+        o.payAmount = pays.reduce(function (a, b) { return a + b; }, 0);
+        // 배송비는 고객이 낸 것만 (배송비 칸의 "결제"가 0보다 큰 줄)
         o.shipFee = fees.reduce(function (a, b) { return a + b; }, 0);
         delete o.raw.amounts.pay; delete o.raw.shipFees.pay;
         return o;
@@ -370,8 +386,8 @@
         rowsSeen: all.length, totalReported: total,
         orders: payloads.reduce(function (a, p) { return a + p.rows.length; }, 0),
         channels: payloads.map(function (p) { return p.channel + ':' + p.rows.length; }),
-        ambiguousAmount: payloads.reduce(function (a, p) {
-          return a + p.rows.filter(function (o) { return o.raw.amounts.payRule === 'AMBIGUOUS_IDENTICAL'; }).length;
+        receivableOrders: payloads.reduce(function (a, p) {
+          return a + p.rows.filter(function (o) { return o.raw.settleType === 'doban_receivable'; }).length;
         }, 0),
         from: from, to: to, daytype: DAYTYPE, brand: BRAND,
         skippedOtherBrand: Object.keys(window.__bjSkipped || {}).reduce(
