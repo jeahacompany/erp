@@ -64,7 +64,7 @@
   function say(t) { msgEl.innerHTML = t; }
   function done(t, bad) {
     say('<span style="color:' + (bad ? '#dc2626' : '#15803d') + '">' + t + '</span>');
-    setTimeout(function () { if (box.parentNode) box.remove(); }, bad ? 15000 : 8000);
+    if (bad) setTimeout(function () { if (box.parentNode) box.remove(); }, 20000);
   }
 
   var txt = function (el) { return el ? (el.textContent || '').replace(/\s+/g, ' ').trim() : ''; };
@@ -347,7 +347,7 @@
         finish('error', 'ERP 응답 없음 (ERP 로그인 확인)');
         done('ERP가 응답하지 않습니다. ERP에 로그인돼 있는지 확인해주세요.', true);
         resolve({ ok: false, reason: 'TIMEOUT' });
-      }, 300000);
+      }, 1200000);
     });
   }
 
