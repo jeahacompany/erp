@@ -223,23 +223,21 @@
   }
 
   // ── 5. 우리 ERP 창을 열어 넘긴다 ──────────────────────────────────────
+  // 사람이 즐겨찾기를 눌러서 온 경우에만 쓴다.
+  // 클릭이 있으므로 창을 열어도 팝업 차단에 걸리지 않는다.
   function send(payload) {
-    say('ERP로 보내는 중…');
-    // 창(window.open)을 쓰지 않는다. 클릭 없이 열면 팝업 차단에 걸린다.
-    // 숨은 프레임은 팝업이 아니라서 막히지 않는다.
-    // 프레임 안의 ERP 화면은 자기 로그인을 그대로 쓰므로, 저장은 ERP 가 한다.
-    var frame = document.createElement('iframe');
-    frame.style.cssText = 'position:fixed;width:0;height:0;border:0;left:-9999px;top:-9999px';
-    frame.src = ERP_URL + '&auto=1';
-    document.body.appendChild(frame);
-    var w = frame.contentWindow;
-
+    say('ERP 창으로 보내는 중…');
+    var w = window.open(ERP_URL, 'erp_ez_receiver');
+    if (!w) {
+      finish(false, '팝업 차단됨');
+      done('팝업이 막혔습니다. 주소창 오른쪽에서 팝업을 허용한 뒤 다시 눌러주세요.', true);
+      return;
+    }
     var sent = false;
     var timer = null;
     function cleanup() {
       window.removeEventListener('message', onMsg);
       clearTimeout(timer);
-      if (frame.parentNode) frame.parentNode.removeChild(frame);
     }
 
     function onMsg(e) {
@@ -285,9 +283,21 @@
         '읽기 완료 · 상품 ' + payload.products.length + ' · 재고 ' + payload.stock.length +
           ' · 입출고 ' + payload.moves.length + ' · 입고 ' + payload.inbound.length
       );
-      // 자동이든 수동이든 같은 길로 보낸다.
-      // 숨은 프레임을 쓰므로 클릭이 없어도 막히지 않는다.
       window.__ezPayload = payload;
+      if (window.__ezAuto) {
+        // 확장프로그램이 돌린 경우엔 여기서 멈춘다.
+        //
+        // 왜 페이지가 직접 못 보내나:
+        //  - window.open → 클릭이 없어 팝업 차단에 걸린다
+        //  - 숨은 iframe → 크롬이 다른 사이트 안의 프레임에 로그인 정보를 안 준다
+        //    (저장소 분리). 그래서 프레임 속 ERP 는 로그인이 풀린 상태가 된다
+        //
+        // 그래서 ERP 로 넘기는 일은 확장프로그램이 자기 탭을 만들어서 한다.
+        finish(true, '읽기 완료 (ERP 전달은 확장프로그램이 함)');
+        window.__ezLastResult.state = 'collected';
+        done('읽었습니다. ERP로 넘깁니다…');
+        return;
+      }
       send(payload);
     })
     .catch(function (e) {
