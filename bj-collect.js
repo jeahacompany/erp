@@ -33,7 +33,17 @@
   var opt = window.__bjOptions || {};
   var DATE_FROM = opt.from || null;   // 'YYYY-MM-DD'
   var DATE_TO = opt.to || null;
+  // ⚠ 날짜 축을 하나만 돌면 반드시 빠진다.
+  //    우리 매출 기준은 "송장 등록일" 인데, 주문일 축으로만 읽으면
+  //    오래 전에 주문돼서 오늘 송장이 붙은 건을 영영 못 본다.
+  //    (2026-09-02 실측: 9/1 송장분 710건 중 8건이 그렇게 빠져 있었다)
+  //
+  //      order_date              주문일       — 아직 송장 안 붙은 주문도 잡는다
+  //      deliveryNum_updatedate  송장 등록일  — 매출 기준. 이게 빠지면 매출이 샌다
   var DAYTYPE = opt.daytype || 'order_date';
+  var DAYTYPES = (opt.daytypes && opt.daytypes.length)
+               ? opt.daytypes
+               : [DAYTYPE];
   var DRY = !!opt.dryRun;
 
   // ⚠ 한 발주모아 계정을 푸드시그널과 도반글로벌이 같이 쓴다 (사용료가 비싸서).
@@ -122,14 +132,25 @@
     return null;
   }
 
+  // ⚠ 표를 "크기"로 고르면 안 된다.
+  //    결과가 적은 날에는 화면 위쪽 검색필터 표(9줄)가 주문 표보다 커서
+  //    그걸 집어 들고 "칸 수가 예상과 다릅니다" 로 멈춘다 = 그 날 자료가 통째로 빠진다.
+  //    (2026-09-02 확인: 검색결과 2건일 때 실제로 필터 표가 선택됐다)
+  //    그래서 머리글에 "주문번호" 가 있는 표만 고른다.
   function bigTable(doc) {
     var ts = [].slice.call(doc.querySelectorAll('table'));
-    ts.sort(function (a, b) { return b.rows.length - a.rows.length; });
-    return ts[0] || null;
+    for (var i = 0; i < ts.length; i++) {
+      var r0 = ts[i].rows[0];
+      if (!r0) continue;
+      for (var j = 0; j < r0.cells.length; j++) {
+        if ((r0.cells[j].textContent || '').indexOf('주문번호') >= 0) return ts[i];
+      }
+    }
+    return null;   // 못 찾으면 checkHeaders 가 멈춘다
   }
 
-  function url(page, from, to) {
-    var q = ['search=mo_allname', 'keyword=', 'daytype=' + DAYTYPE,
+  function url(page, from, to, daytype) {
+    var q = ['search=mo_allname', 'keyword=', 'daytype=' + (daytype || DAYTYPE),
              'pagesize=' + PAGE_SIZE, 'page=' + page];
     if (from) q.push('date_from=' + from);
     if (to) q.push('date_to=' + to);
@@ -228,8 +249,8 @@
   }
 
   // ── 페이지 순회 ──────────────────────────────────────────────────────
-  function fetchPage(page, from, to) {
-    return fetch(url(page, from, to), { credentials: 'include' })
+  function fetchPage(page, from, to, daytype) {
+    return fetch(url(page, from, to, daytype), { credentials: 'include' })
       .then(function (r) { return r.text(); })
       .then(function (html) {
         if (/name=["']?(userid|login)/i.test(html) && html.length < 5000) {
@@ -415,12 +436,15 @@
   }
 
   // ── 하루(또는 한 기간) 처리 ─────────────────────────────────────────
-  function runRange(from, to) {
+  function runRange(from, to, daytype) {
     window.__bjCurFrom = from; window.__bjCurTo = to;
+    var AXIS = daytype || DAYTYPE;
+    var axisName = AXIS === 'deliveryNum_updatedate' ? '송장일'
+                 : AXIS === 'upload_date' ? '업로드일' : '주문일';
     var all = [], total = null;
     function loop(page) {
-      say(from + '~' + to + ' 읽는 중… ' + page + '쪽 (' + all.length + '줄)');
-      return fetchPage(page, from, to).then(function (res) {
+      say('[' + axisName + '] ' + from + '~' + to + ' 읽는 중… ' + page + '쪽 (' + all.length + '줄)');
+      return fetchPage(page, from, to, AXIS).then(function (res) {
         if (total == null) total = res.total;
         all = all.concat(res.rows);
         if (res.rows.length >= PAGE_SIZE && page < MAX_PAGES) return loop(page + 1);
@@ -448,7 +472,7 @@
         receivableOrders: payloads.reduce(function (a, p) {
           return a + p.rows.filter(function (o) { return o.raw.settleType === 'doban_receivable'; }).length;
         }, 0),
-        from: from, to: to, daytype: DAYTYPE, brand: BRAND,
+        from: from, to: to, daytype: AXIS, brand: BRAND,
         skippedOtherBrand: Object.keys(window.__bjSkipped || {}).reduce(
           function (a, k) { return a + window.__bjSkipped[k]; }, 0),
       };
@@ -468,8 +492,13 @@
   // ── 실행 ─────────────────────────────────────────────────────────────
   // ranges 가 있으면 여러 기간을 차례로 처리한다. 한 기간이 실패하면 거기서 멈춘다
   // (뒤에 것을 계속 넣어 어디까지 됐는지 모르게 만들지 않는다).
-  var RANGES = opt.ranges && opt.ranges.length ? opt.ranges
-             : (DATE_FROM && DATE_TO ? [[DATE_FROM, DATE_TO]] : null);
+  var BASE_RANGES = opt.ranges && opt.ranges.length ? opt.ranges
+                  : (DATE_FROM && DATE_TO ? [[DATE_FROM, DATE_TO]] : null);
+  // 날짜 축마다 같은 기간을 한 번씩 돈다. 같은 주문이 두 축에 다 잡혀도
+  // (channel, 주문번호) 로 중복이 막혀 있어 안전하다.
+  var RANGES = BASE_RANGES && [].concat.apply([], DAYTYPES.map(function (dt) {
+    return BASE_RANGES.map(function (r) { return [r[0], r[1], dt]; });
+  }));
   if (!RANGES) {
     finish('error', '조회 기간이 없습니다');
     done('조회 기간을 정해주세요.', true);
@@ -484,8 +513,8 @@
       return;
     }
     var r = RANGES[i];
-    runRange(r[0], r[1]).then(function (res) {
-      window.__bjLog.push({ from: r[0], to: r[1], ok: res.ok,
+    runRange(r[0], r[1], r[2]).then(function (res) {
+      window.__bjLog.push({ from: r[0], to: r[1], daytype: r[2], ok: res.ok,
         rows: res.stat && res.stat.rowsSeen, orders: res.stat && res.stat.orders,
         saved: res.saved, reason: res.reason });
       if (!res.ok) {

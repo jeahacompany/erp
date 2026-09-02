@@ -54,10 +54,17 @@
   function pick(s, re) { var m = String(s || '').match(re); return m ? m[1] : null; }
   function num(s) { var v = String(s == null ? '' : s).replace(/[^0-9.-]/g, ''); return v === '' ? null : Number(v); }
 
+  // ⚠ bj-collect.js 와 같은 이유 — 크기로 고르면 검색필터 표를 집는다.
   function bigTable(doc) {
     var ts = [].slice.call(doc.querySelectorAll('table'));
-    ts.sort(function (a, b) { return b.rows.length - a.rows.length; });
-    return ts[0] || null;
+    for (var i = 0; i < ts.length; i++) {
+      var r0 = ts[i].rows[0];
+      if (!r0) continue;
+      for (var j = 0; j < r0.cells.length; j++) {
+        if ((r0.cells[j].textContent || '').indexOf('주문번호') >= 0) return ts[i];
+      }
+    }
+    return null;
   }
 
   function checkHeaders(t) {
