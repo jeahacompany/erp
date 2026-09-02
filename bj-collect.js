@@ -347,8 +347,14 @@
         pname: r.pname, popt: r.popt,
         qty: r.qty,
         amount: r.payAmount == null ? 0 : r.payAmount,
-        supplier: r.supplier || null,     // 공급사 원문. 없으면 위탁상품으로 본다
+        supplier: r.supplier || null,     // 공급사 원문 (물류형태·정산의 기준)
         goodsCode: r.goodsCode || null,   // 발주모아 상품코드
+        // 공급사별 지급 예정금액을 내려면 줄 단위 금액이 있어야 한다.
+        // 주문 머리에만 합쳐 두면 한 주문에 공급사가 섞였을 때 나눌 수 없다.
+        // (2026-09-03 실측: 공급사가 섞인 주문 784건 · 상품 2,436줄)
+        supplyAmount: r.supplyAmount == null ? null : r.supplyAmount,
+        sellerAmount: r.sellerAmount == null ? null : r.sellerAmount,
+        consumerAmount: r.consumerAmount == null ? null : r.consumerAmount,
       });
       // ⚠ 같은 주문에 "같은 옵션·같은 수량·같은 금액" 줄이 두 번 나오는 경우가 있다.
       //   원본을 보면 송장번호가 서로 달라서, 같은 상품을 두 번 내보낸 것(분할출고·재배송)이다.
