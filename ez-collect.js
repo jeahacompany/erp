@@ -44,21 +44,69 @@
     setTimeout(function () { box.remove(); window.__ezCollectRunning = false; }, bad ? 12000 : 6000);
   }
 
-  function csrf() {
-    var m = document.cookie.match(/production-csrfToken=([^;]+)/);
-    return m ? decodeURIComponent(m[1]) : '';
+  // ⚠ 인증 헤더를 우리가 만들지 않는다. (2026-09-03)
+  //
+  //   예전에는 쿠키에서 csrf 토큰을 꺼내 x-xsrf-token 을 직접 만들었다.
+  //   그런데 EZSTORAGE 가 방식을 바꿔 그 쿠키가 더 이상 없다.
+  //   토큰 없이 보내면 서버가 401 을 주고, **그 401 을 받은 EZSTORAGE 앱이
+  //   사용자를 로그아웃시켜 버린다.** (로그인할 때마다 튕기는 원인이었다)
+  //
+  //   그래서 이제는 **앱이 스스로 보내는 요청의 헤더를 그대로 빌려 쓴다.**
+  //   토큰 값을 우리가 읽지도, 저장하지도, 만들지도 않는다.
+  //   헤더를 못 구하면 **요청을 아예 보내지 않고 멈춘다.** (로그아웃시키지 않기 위해)
+  var HDR = null;
+
+  function captureHeaders(waitMs) {
+    if (HDR) return Promise.resolve(HDR);
+    return new Promise(function (resolve) {
+      var orig = window.fetch;
+      var done = false;
+      function finish(h) {
+        if (done) return;
+        done = true;
+        window.fetch = orig;
+        HDR = h;
+        resolve(h);
+      }
+      window.fetch = function (i, init) {
+        try {
+          var u = typeof i === 'string' ? i : (i && i.url) || '';
+          if (/api\.ezstorage\.io/.test(u)) {
+            var h = (init && init.headers) || (i && i.headers);
+            if (h) {
+              var o = {};
+              if (typeof h.forEach === 'function') h.forEach(function (v, k) { o[k] = v; });
+              else Object.keys(h).forEach(function (k) { o[k] = h[k]; });
+              if (o['x-xsrf-token']) finish(o);
+            }
+          }
+        } catch (e) { /* 관찰만 한다. 앱 동작을 막지 않는다 */ }
+        return orig.apply(this, arguments);
+      };
+      // 앱이 스스로 요청을 내도록 살짝 건드린다 (화면 이동 없이)
+      try { window.dispatchEvent(new Event('focus')); } catch (e) {}
+      try {
+        var ac = window.__APOLLO_CLIENT__;
+        if (ac && typeof ac.getObservableQueries === 'function') {
+          ac.getObservableQueries().forEach(function (q) {
+            try { q.refetch(); } catch (e) {}
+          });
+        }
+      } catch (e) {}
+      setTimeout(function () { finish(null); }, waitMs || 15000);
+    });
   }
 
   function gql(query, variables) {
+    if (!HDR) {
+      return Promise.reject(new Error('EZ_NO_HEADERS'));
+    }
+    var headers = { 'content-type': 'application/json' };
+    Object.keys(HDR).forEach(function (k) { headers[k] = HDR[k]; });
     return fetch(API, {
       method: 'POST',
       credentials: 'include',
-      headers: {
-        'content-type': 'application/json',
-        accept: '*/*',
-        'apollo-require-preflight': 'true',
-        'x-xsrf-token': csrf(),
-      },
+      headers: headers,
       body: JSON.stringify({ query: query, variables: variables || {} }),
     })
       .then(function (r) { return r.json(); })
@@ -271,7 +319,18 @@
 
   // ── 실행 ──────────────────────────────────────────────────────────────
   var payload = { collectedAt: new Date().toISOString(), days: DAYS };
-  findIds()
+  say('EZSTORAGE 화면이 쓰는 인증을 확인하는 중…');
+  captureHeaders(15000)
+    .then(function (h) {
+      if (!h) {
+        // 헤더를 못 구했으면 **아무 요청도 보내지 않는다.**
+        // 잘못 보내면 서버가 401 을 주고 EZSTORAGE 가 사용자를 로그아웃시킨다.
+        var e = new Error('EZSTORAGE 화면에서 조회를 한 번 해주세요 (인증을 확인하지 못했습니다)');
+        e.code = 'EZ_NO_HEADERS';
+        throw e;
+      }
+    })
+    .then(findIds)
     .then(fetchStock)
     .then(function (r) { payload.products = r.products; payload.stock = r.stock; })
     .then(fetchMoves)
