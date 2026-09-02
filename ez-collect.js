@@ -280,6 +280,16 @@
         '읽기 완료 · 상품 ' + payload.products.length + ' · 재고 ' + payload.stock.length +
           ' · 입출고 ' + payload.moves.length + ' · 입고 ' + payload.inbound.length
       );
+      if (window.__ezAuto) {
+        // 확장프로그램이 돌린 경우엔 창을 열지 않는다.
+        // 클릭이 없어서 window.open 이 팝업 차단에 걸린다.
+        // 읽은 것만 남겨두고, ERP 로 넘기는 일은 확장프로그램이 한다.
+        window.__ezPayload = payload;
+        finish(true, '읽기 완료 (ERP 전달은 확장프로그램이 함)');
+        window.__ezLastResult.state = 'collected';
+        done('읽었습니다. ERP로 넘깁니다…');
+        return;
+      }
       send(payload);
     })
     .catch(function (e) {
