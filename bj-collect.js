@@ -104,11 +104,11 @@
     return ts[0] || null;
   }
 
-  function url(page) {
+  function url(page, from, to) {
     var q = ['search=mo_allname', 'keyword=', 'daytype=' + DAYTYPE,
              'pagesize=' + PAGE_SIZE, 'page=' + page];
-    if (DATE_FROM) q.push('date_from=' + DATE_FROM);
-    if (DATE_TO) q.push('date_to=' + DATE_TO);
+    if (from) q.push('date_from=' + from);
+    if (to) q.push('date_to=' + to);
     return LIST + '?' + q.join('&');
   }
 
@@ -198,8 +198,8 @@
   }
 
   // ── 페이지 순회 ──────────────────────────────────────────────────────
-  function fetchPage(page) {
-    return fetch(url(page), { credentials: 'include' })
+  function fetchPage(page, from, to) {
+    return fetch(url(page, from, to), { credentials: 'include' })
       .then(function (r) { return r.text(); })
       .then(function (html) {
         if (/name=["']?(userid|login)/i.test(html) && html.length < 5000) {
@@ -293,7 +293,7 @@
         return o;
       });
       out.push({ channel: ch, source: 'baljumoa',
-                 filename: '발주모아 ' + (DATE_FROM || '') + '~' + (DATE_TO || ''),
+                 filename: '발주모아 ' + (window.__bjCurFrom || '') + '~' + (window.__bjCurTo || ''),
                  rows: arr });
     });
     window.__bjSkipped = skipped;
@@ -301,94 +301,137 @@
   }
 
   // ── ERP 로 보내기 ────────────────────────────────────────────────────
+  // 창은 딱 하나만 쓴다. 처음 한 번만 열고(사람이 누른 그 순간),
+  // 그 뒤로는 같은 창에 계속 건넨다. 그래야 여러 날짜를 이어서 넣을 수 있다.
+  // (열려 있는 창에 보내는 것은 팝업 차단과 무관하다)
   function send(payloads, stat) {
-    say('ERP 창으로 보내는 중… (' + payloads.length + '개 판매처)');
-    // 여러 기간을 잇달아 넣을 때를 위해 창 이름을 매번 다르게 한다.
-    // 같은 이름이면 창이 다시 뜨지 않아 "준비됐다" 신호가 안 온다.
-    var w = window.open(ERP_URL, opt.winName || 'erp_bj_receiver');
-    if (!w) { finish('error', '팝업 차단됨'); done('팝업이 막혔습니다. 허용 후 다시 눌러주세요.', true); return; }
-    var sent = false, timer = null;
-    function off() {
-      window.removeEventListener('message', onMsg);
-      clearTimeout(timer);
-      try { if (opt.winName) w.close(); } catch { /* 이미 닫혔으면 넘어간다 */ }
-    }
-    function onMsg(e) {
-      if (e.origin !== ERP_ORIGIN || !e.data) return;
-      if (e.data.type === 'EZ_READY' && !sent) {
-        sent = true;
-        (e.source || w).postMessage({ type: 'BJ_DATA', payloads: payloads, stat: stat }, ERP_ORIGIN);
-      } else if (e.data.type === 'BJ_SAVED') {
-        off(); finish('ok', '저장 완료', { result: e.data.result, stat: stat });
-        var r = e.data.result || {};
-        if (typeof window.__bjNext === 'function') { try { window.__bjNext(); } catch { /* 무시 */ } }
-        done('저장했습니다 · 신규 ' + (r.new || 0) + ' · 갱신 ' + (r.dup || 0) + ' · 잠김 ' + (r.locked || 0));
-      } else if (e.data.type === 'EZ_ERROR' || e.data.type === 'BJ_ERROR') {
-        off(); finish('error', 'ERP: ' + (e.data.message || '오류'));
-        done('ERP 쪽에서 막혔습니다: ' + (e.data.message || '오류'), true);
+    return new Promise(function (resolve) {
+      say('ERP 로 보내는 중… (' + payloads.length + '개 판매처)');
+      var reuse = window.__bjWin && !window.__bjWin.closed;
+      var w = reuse ? window.__bjWin : window.open(ERP_URL, 'erp_bj_receiver');
+      if (!w) {
+        finish('error', '팝업 차단됨');
+        done('팝업이 막혔습니다. 허용 후 다시 눌러주세요.', true);
+        return resolve({ ok: false, reason: 'POPUP_BLOCKED' });
       }
+      window.__bjWin = w;
+      var sent = false, timer = null;
+      function off() { window.removeEventListener('message', onMsg); clearTimeout(timer); }
+      function push() {
+        if (sent) return;
+        sent = true;
+        w.postMessage({ type: 'BJ_DATA', payloads: payloads, stat: stat }, ERP_ORIGIN);
+      }
+      function onMsg(e) {
+        if (e.origin !== ERP_ORIGIN || !e.data) return;
+        if (e.data.type === 'EZ_READY') { push(); }
+        else if (e.data.type === 'BJ_SAVED') {
+          off();
+          var r = e.data.result || {};
+          finish('ok', '저장 완료', { result: r, stat: stat });
+          done('저장 · 신규 ' + (r.new || 0) + ' · 갱신 ' + (r.dup || 0) + ' · 잠김 ' + (r.locked || 0));
+          resolve({ ok: true, result: r });
+        } else if (e.data.type === 'EZ_ERROR' || e.data.type === 'BJ_ERROR') {
+          off();
+          var m = e.data.message || '오류';
+          finish('error', 'ERP: ' + m);
+          done('ERP 쪽에서 막혔습니다: ' + m, true);
+          resolve({ ok: false, reason: m });
+        }
+      }
+      window.addEventListener('message', onMsg);
+      // 이미 떠 있는 창이면 준비 신호를 기다리지 않고 바로 건넨다.
+      if (reuse) setTimeout(push, 300);
+      timer = setTimeout(function () {
+        off();
+        finish('error', 'ERP 응답 없음 (ERP 로그인 확인)');
+        done('ERP가 응답하지 않습니다. ERP에 로그인돼 있는지 확인해주세요.', true);
+        resolve({ ok: false, reason: 'TIMEOUT' });
+      }, 300000);
+    });
+  }
+
+  // ── 하루(또는 한 기간) 처리 ─────────────────────────────────────────
+  function runRange(from, to) {
+    window.__bjCurFrom = from; window.__bjCurTo = to;
+    var all = [], total = null;
+    function loop(page) {
+      say(from + '~' + to + ' 읽는 중… ' + page + '쪽 (' + all.length + '줄)');
+      return fetchPage(page, from, to).then(function (res) {
+        if (total == null) total = res.total;
+        all = all.concat(res.rows);
+        if (res.rows.length >= PAGE_SIZE && page < MAX_PAGES) return loop(page + 1);
+        return null;
+      });
     }
-    window.addEventListener('message', onMsg);
-    timer = setTimeout(function () {
-      off(); finish('error', 'ERP 응답 없음 (ERP 로그인 확인)');
-      done('ERP가 응답하지 않습니다. ERP에 로그인돼 있는지 확인해주세요.', true);
-    }, 180000);
+    return loop(1).then(function () {
+      var payloads = build(all);
+      var stat = {
+        rowsSeen: all.length, totalReported: total,
+        orders: payloads.reduce(function (a, p) { return a + p.rows.length; }, 0),
+        channels: payloads.map(function (p) { return p.channel + ':' + p.rows.length; }),
+        ambiguousAmount: payloads.reduce(function (a, p) {
+          return a + p.rows.filter(function (o) { return o.raw.amounts.payRule === 'AMBIGUOUS_IDENTICAL'; }).length;
+        }, 0),
+        from: from, to: to, daytype: DAYTYPE, brand: BRAND,
+        skippedOtherBrand: Object.keys(window.__bjSkipped || {}).reduce(
+          function (a, k) { return a + window.__bjSkipped[k]; }, 0),
+      };
+      window.__bjStat = stat;
+      if (DRY) {
+        finish('preview', '미리보기 (저장 안 함)', { stat: stat });
+        done('미리보기 · 줄 ' + stat.rowsSeen + ' · 주문 ' + stat.orders);
+        return { ok: true, stat: stat, saved: null };
+      }
+      if (!payloads.length) { return { ok: true, stat: stat, saved: { new: 0, dup: 0 } }; }
+      return send(payloads, stat).then(function (r) {
+        return { ok: r.ok, stat: stat, saved: r.result || null, reason: r.reason };
+      });
+    });
   }
 
   // ── 실행 ─────────────────────────────────────────────────────────────
-  if (!DATE_FROM || !DATE_TO) {
+  // ranges 가 있으면 여러 기간을 차례로 처리한다. 한 기간이 실패하면 거기서 멈춘다
+  // (뒤에 것을 계속 넣어 어디까지 됐는지 모르게 만들지 않는다).
+  var RANGES = opt.ranges && opt.ranges.length ? opt.ranges
+             : (DATE_FROM && DATE_TO ? [[DATE_FROM, DATE_TO]] : null);
+  if (!RANGES) {
     finish('error', '조회 기간이 없습니다');
     done('조회 기간을 정해주세요.', true);
     return;
   }
 
-  var all = [];
-  var total = null;
-  function loop(page) {
-    say('읽는 중… ' + page + '페이지 (' + all.length + '줄)');
-    return fetchPage(page).then(function (res) {
-      if (total == null) total = res.total;
-      all = all.concat(res.rows);
-      if (res.rows.length >= PAGE_SIZE && page < MAX_PAGES) return loop(page + 1);
-      return null;
-    });
-  }
-
-  loop(1).then(function () {
-    var payloads = build(all);
-    var stat = {
-      rowsSeen: all.length, totalReported: total,
-      orders: payloads.reduce(function (a, p) { return a + p.rows.length; }, 0),
-      channels: payloads.map(function (p) { return p.channel + ':' + p.rows.length; }),
-      ambiguousAmount: payloads.reduce(function (a, p) {
-        return a + p.rows.filter(function (o) { return o.raw.amounts.payRule === 'AMBIGUOUS_IDENTICAL'; }).length;
-      }, 0),
-      from: DATE_FROM, to: DATE_TO, daytype: DAYTYPE,
-      brand: BRAND,
-      skippedOtherBrand: Object.keys(window.__bjSkipped || {}).reduce(
-        function (a, k) { return a + window.__bjSkipped[k]; }, 0),
-      skippedChannels: Object.keys(window.__bjSkipped || {}).map(
-        function (k) { return k + ':' + window.__bjSkipped[k]; }),
-    };
-    window.__bjStat = stat;
-    if (DRY) {
-      finish('preview', '미리보기 (저장 안 함)', { stat: stat });
-      done('미리보기 완료 · 줄 ' + stat.rowsSeen + ' · 주문 ' + stat.orders);
+  window.__bjLog = [];
+  (function next(i) {
+    if (i >= RANGES.length) {
+      finish('ok', '전체 완료', { log: window.__bjLog });
+      done('전체 완료 · ' + RANGES.length + '개 기간');
       return;
     }
-    say('읽기 완료 · 줄 ' + stat.rowsSeen + ' · 주문 ' + stat.orders);
-    send(payloads, stat);
-  }).catch(function (e) {
-    var m = String((e && e.message) || e);
-    if (m === 'AUTH_REQUIRED') {
-      finish('error', '발주모아 로그인이 필요합니다');
-      done('발주모아 로그인이 풀렸습니다. 다시 로그인해주세요.', true);
-    } else if (e && e.code === 'HTML_STRUCTURE_CHANGED') {
-      finish('error', '화면 구조 변경: ' + m);
-      done('발주모아 화면 구조가 바뀌었습니다. <b>저장을 중단했습니다.</b><br>' + m, true);
-    } else {
-      finish('error', m);
-      done('읽지 못했습니다: ' + m, true);
-    }
-  });
+    var r = RANGES[i];
+    runRange(r[0], r[1]).then(function (res) {
+      window.__bjLog.push({ from: r[0], to: r[1], ok: res.ok,
+        rows: res.stat && res.stat.rowsSeen, orders: res.stat && res.stat.orders,
+        saved: res.saved, reason: res.reason });
+      if (!res.ok) {
+        finish('error', r[0] + '~' + r[1] + ' 에서 멈춤: ' + (res.reason || ''), { log: window.__bjLog });
+        done(r[0] + '~' + r[1] + ' 에서 멈췄습니다: ' + (res.reason || ''), true);
+        return;
+      }
+      setTimeout(function () { next(i + 1); }, 1500);
+    }).catch(function (e) {
+      var m = String((e && e.message) || e);
+      window.__bjLog.push({ from: r[0], to: r[1], ok: false, reason: m });
+      if (m === 'AUTH_REQUIRED') {
+        finish('error', '발주모아 로그인이 필요합니다', { log: window.__bjLog });
+        done('발주모아 로그인이 풀렸습니다. 다시 로그인해주세요.', true);
+      } else if (e && e.code === 'HTML_STRUCTURE_CHANGED') {
+        finish('error', '화면 구조 변경: ' + m, { log: window.__bjLog });
+        done('발주모아 화면 구조가 바뀌었습니다. <b>저장을 중단했습니다.</b><br>' + m, true);
+      } else {
+        finish('error', m, { log: window.__bjLog });
+        done('읽지 못했습니다: ' + m, true);
+      }
+    });
+  })(0);
 })();
