@@ -189,6 +189,12 @@
     });
   }
 
+  // ⚠ 창은 "시작하자마자" 연다.
+  //   읽기가 끝난 뒤에 열면 사람이 누른 효력이 이미 사라져서 팝업 차단에 걸린다.
+  if (!DRY && !(window.__bjcWin && !window.__bjcWin.closed)) {
+    try { window.__bjcWin = window.open(ERP_URL, 'erp_bjc_receiver'); } catch { window.__bjcWin = null; }
+  }
+
   var all = [], total = null;
   function loop(page) {
     say('읽는 중… ' + page + '쪽 (' + all.length + '건)');
