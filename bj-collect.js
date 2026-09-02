@@ -332,7 +332,7 @@
       }
       window.__bjWin = w;
       var sent = false, timer = null;
-      function off() { window.removeEventListener('message', onMsg); clearTimeout(timer); }
+      var off = function () { window.removeEventListener('message', onMsg); clearTimeout(timer); };
       function push() {
         if (sent) return;
         sent = true;
@@ -358,6 +358,24 @@
       window.addEventListener('message', onMsg);
       // 이미 떠 있는 창이면 준비 신호를 기다리지 않고 바로 건넨다.
       if (reuse) setTimeout(push, 300);
+
+      // 답이 한참 없으면 창이 죽은 것으로 보고 한 번 다시 열어 보낸다.
+      // (예전에는 그냥 멈춰서 뒤 날짜를 통째로 못 넣었다)
+      var retried = false;
+      var watchdog = setInterval(function () {
+        var dead = !window.__bjWin || window.__bjWin.closed;
+        if (dead && !retried) {
+          retried = true;
+          say('ERP 창이 닫혔습니다. 다시 열어 보냅니다…');
+          sent = false;
+          try { w = window.open(ERP_URL, 'erp_bj_receiver_' + Date.now()); } catch (e) { w = null; }
+          if (w) { window.__bjWin = w; }
+        }
+      }, 20000);
+
+      var origOff = off;
+      off = function () { clearInterval(watchdog); origOff(); };
+
       timer = setTimeout(function () {
         off();
         finish('error', 'ERP 응답 없음 (ERP 로그인 확인)');
