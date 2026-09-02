@@ -368,7 +368,7 @@
           retried = true;
           say('ERP 창이 닫혔습니다. 다시 열어 보냅니다…');
           sent = false;
-          try { w = window.open(ERP_URL, 'erp_bj_receiver_' + Date.now()); } catch (e) { w = null; }
+          try { w = window.open(ERP_URL, 'erp_bj_receiver_' + Date.now()); } catch { w = null; }
           if (w) { window.__bjWin = w; }
         }
       }, 20000);
