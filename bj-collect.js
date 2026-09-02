@@ -249,7 +249,12 @@
   }
 
   // ── 페이지 순회 ──────────────────────────────────────────────────────
-  function fetchPage(page, from, to, daytype) {
+  // 표를 아예 못 찾은 것과, 표는 있는데 머리글이 다른 것은 다르다.
+  //   못 찾음   → 서버가 잠깐 엉뚱한 응답(오류/점검 화면)을 준 것일 수 있다 → 다시 시도
+  //   머리글 다름 → 진짜 화면 구조가 바뀐 것 → 바로 멈춘다 (틀린 값을 넣지 않는다)
+  var PAGE_RETRY = 3;
+  function fetchPage(page, from, to, daytype, attempt) {
+    attempt = attempt || 1;
     return fetch(url(page, from, to, daytype), { credentials: 'include' })
       .then(function (r) { return r.text(); })
       .then(function (html) {
@@ -258,6 +263,11 @@
         }
         var doc = new DOMParser().parseFromString(html, 'text/html');
         var t = bigTable(doc);
+        if (!t && attempt < PAGE_RETRY) {
+          say('응답이 이상해 다시 받는 중… (' + attempt + '/' + PAGE_RETRY + ')');
+          return new Promise(function (res) { setTimeout(res, 2000 * attempt); })
+            .then(function () { return fetchPage(page, from, to, daytype, attempt + 1); });
+        }
         var bad = checkHeaders(t);
         if (bad) { var e = new Error(bad); e.code = 'HTML_STRUCTURE_CHANGED'; throw e; }
         var total = null;
