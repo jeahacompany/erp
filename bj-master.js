@@ -257,6 +257,76 @@
     });
   }
 
+
+  // ── 5) 배송비 ───────────────────────────────────────────────────────
+  //   19,834줄이라 1000줄씩 나눠 읽고, 한 쪽 읽을 때마다 바로 보낸다.
+  //   ⚠ 이 화면에는 **수령인**이 있다. 그 칸은 읽지 않는다.
+  //   배송비가 셋(산출·수정·정산)이다. 손익에 쓸 값은 **정산 배송비**.
+  function shipFeeRows(doc) {
+    var t = tableWith(doc, ['배송비']);
+    if (!t || !t.rows[0]) return null;              // 표 모양이 바뀌면 저장하지 않는다
+    var head = [].map.call(t.rows[0].cells, function (c) { return txt(c); });
+    function ix(want, not) {
+      for (var i = 0; i < head.length; i++) {
+        if (head[i].indexOf(want) >= 0 && (!not || head[i].indexOf(not) < 0)) return i;
+      }
+      return -1;
+    }
+    var iOrd = ix('주문번호'), iQty = ix('수량'), iPrice = ix('판매가');
+    var iInv = ix('송장번호', '임시'), iParty = ix('판매사');
+    var iCalc = ix('산출'), iFix = ix('수정'), iSettle = ix('정산');
+    if (iOrd < 0 || iSettle < 0) return null;       // 최소한 이 둘은 있어야 한다
+    var out = [];
+    for (var i = 1; i < t.rows.length; i++) {
+      var c = t.rows[i].cells;
+      if (!c || c.length <= iSettle) continue;
+      var ordCell = txt(c[iOrd]);
+      var ordNo = (ordCell.match(/[A-Za-z0-9_-]{6,}/) || [])[0];
+      if (!ordNo) continue;
+      var d = ordCell.match(/(20\d{2})[.\-\/](\d{1,2})[.\-\/](\d{1,2})/);
+      var party = iParty >= 0 ? txt(c[iParty]).split(/\s*[·\/|]\s*|\n/) : [];
+      out.push({
+        orderNo: ordNo,
+        invoiceNo: iInv >= 0 ? ((txt(c[iInv]).match(/\d{8,}/) || [])[0] || null) : null,
+        orderDate: d ? d[1] + '-' + ('0' + d[2]).slice(-2) + '-' + ('0' + d[3]).slice(-2) : null,
+        seller: clean(party[0] || '') || null,
+        supplier: clean(party[1] || '') || null,
+        qty: iQty >= 0 ? num(txt(c[iQty])) : null,
+        salePrice: iPrice >= 0 ? num(txt(c[iPrice])) : null,
+        calcFee: iCalc >= 0 ? num(txt(c[iCalc])) : null,
+        fixedFee: iFix >= 0 ? num(txt(c[iFix])) : null,
+        settleFee: num(txt(c[iSettle])),
+      });
+    }
+    return out;
+  }
+
+  function grabShipFee() {
+    var MAX_PAGES = 40;                              // 19,834줄 ÷ 1000 = 20쪽. 두 배까지만.
+    var seen = {}, total = 0, badShape = false;
+    function page(p) {
+      if (p > MAX_PAGES) return Promise.resolve();
+      say(stepTag + ' 배송비 ' + p + '쪽 (' + total + '줄)…');
+      return get('/Acc/deliveryPriceList?page=' + p + '&pagesize=1000').then(function (doc) {
+        var rows = shipFeeRows(doc);
+        if (rows === null) { badShape = true; return; }   // 표가 바뀌었다 → 멈춘다
+        var fresh = rows.filter(function (r) {
+          var k = r.orderNo + '|' + (r.invoiceNo || '');
+          if (seen[k]) return false;
+          seen[k] = 1; return true;
+        });
+        if (!fresh.length) return;                        // 다 봤다 → 끝
+        total += fresh.length;
+        return send('shipfee', fresh).then(function () {
+          return rest().then(function () { return page(p + 1); });
+        });
+      });
+    }
+    return page(1).then(function () {
+      if (badShape && total === 0) throw new Error('배송비 표 모양이 바뀌었습니다');
+      return { rows: total, shapeChanged: badShape || undefined };
+    });
+  }
   // ── 실행 ────────────────────────────────────────────────────────────
   var steps = [
     ['판매처·공급사', function () {
@@ -289,8 +359,12 @@
       return grabBalance('supply', '/Acc/receivable_supply')
         .then(function (r) { return send('balance', r).then(function () { return { rows: r.length }; }); });
     }],
+    ['배송비', function () {
+      return grabShipFee();
+    }],
   ];
 
+  var stepTag = '';
   var log = [];
   function gotRows(g) {
     if (!g) return 0;
@@ -313,7 +387,8 @@
       done('완료 · ' + total + '줄' + (failed ? ' (일부 실패 ' + failed + ')' : ''), !!failed);
       return;
     }
-    say('[' + (i + 1) + '/' + steps.length + '] ' + steps[i][0] + ' 읽는 중…');
+    stepTag = '[' + (i + 1) + '/' + steps.length + ']';
+    say(stepTag + ' ' + steps[i][0] + ' 읽는 중…');
     steps[i][1]().then(function (r) {
       log.push({ name: steps[i][0], ok: true, got: r });
       rest().then(function () { next(i + 1); });
