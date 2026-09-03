@@ -244,33 +244,56 @@
     });
   }
   // ── 3) 정산 ─────────────────────────────────────────────────────────
-  //   ⚠ 이 사이트는 **모든 화면 맨 위에 안내표**가 하나 깔려 있다.
-  //      "정산 | 세금계산서가 발행되었습니다 …"
-  //      그래서 ['정산'] 으로 찾으면 그 안내표를 잡는다. 실제로 0줄이 나왔다.
-  //      머리글 낱말을 넉넉히 줘서 진짜 표를 집는다.
-  //   실제 칸: [선택] 정산정보 | 건수 | 금액 | 관리
+  //   ⚠ 이 표는 **머리글이 두 줄**이다 (2026-09-03 실측).
+  //        1줄: 정산정보 | 건수 | 금액 | 관리      ← 묶음 제목
+  //        2줄: No | 정산정보 | 공급사(정산그룹) | 정산상태 | 정산기간 | … | 총 합계
+  //      첫 줄만 보고 칸을 세면 전부 어긋난다. **'정산기간' 이 있는 줄**을 머리글로 잡는다.
+  //   ⚠ 그리고 모든 화면 맨 위에 "세금계산서가 발행되었습니다" 안내표가 하나 더 있다.
   function grabSettle(side, path) {
     return get(path + '?pagesize=1000').then(function (d) {
-      var t = tableWith(d, ['정산정보', '건수', '금액']);
-      if (!t || !t.rows[0]) return [];
-      var head = [].map.call(t.rows[0].cells, function (c) { return txt(c); });
+      var ts = [].slice.call(d.querySelectorAll('table'));
+      var t = null, hi = -1, head = null;
+      for (var k = 0; k < ts.length && !t; k++) {
+        for (var j = 0; j < Math.min(3, ts[k].rows.length); j++) {
+          var hh = [].map.call(ts[k].rows[j].cells, function (c) { return txt(c); });
+          var line = hh.join(' ');
+          // ⚠ '정산기간' 만 보면 **검색창**을 잡는다 (거기에도 그 낱말이 있다).
+          //   '총 합계' 까지 있어야 진짜 목록표다.
+          if (line.indexOf('정산기간') >= 0 && line.indexOf('총 합계') >= 0) {
+            t = ts[k]; hi = j; head = hh; break;
+          }
+        }
+      }
+      // 표를 못 찾으면 조용히 0줄로 넘기지 않는다. 화면이 바뀐 것이므로 실패로 알린다.
+      if (!t) throw new Error('정산 표를 찾지 못했습니다 (화면 구조 변경)');
       function ix(w) { for (var i = 0; i < head.length; i++) if (head[i].indexOf(w) >= 0) return i; return -1; }
-      var iInfo = ix('정산정보'), iCnt = ix('건수'), iAmt = ix('금액');
-      if (iInfo < 0 || iAmt < 0) return [];
+      var iInfo = ix('정산정보'), iName = ix('정산그룹'), iState = ix('정산상태');
+      var iPeriod = ix('정산기간'), iShip = ix('총 배송비'), iSum = ix('총 합계');
+      if (iName < 0 || iSum < 0) throw new Error('정산 표의 칸 이름이 바뀌었습니다');
+
       var out = [];
-      for (var i = 1; i < t.rows.length; i++) {
+      for (var i = hi + 1; i < t.rows.length; i++) {
         var c = t.rows[i].cells;
-        if (!c || c.length <= iAmt) continue;
-        var info = txt(c[iInfo]);
-        if (!info) continue;
-        var dt = info.match(/(20\d{2})[.\-\/](\d{1,2})[.\-\/](\d{1,2})/);
+        if (!c || c.length <= iSum) continue;
+        var partner = clean(txt(c[iName]));
+        if (!partner) continue;
+        // 정산 고유번호: "B_260902_260902_43629" 의 맨 뒤 숫자
+        var info = iInfo >= 0 ? txt(c[iInfo]) : '';
+        var bjId = (info.match(/_(\d+)\b/g) || []).pop();
+        bjId = bjId ? bjId.replace('_', '') : null;
+        var per = (iPeriod >= 0 ? txt(c[iPeriod]) : '').match(/20\d{2}[-.\/]\d{1,2}[-.\/]\d{1,2}/g) || [];
+        // 총 합계 칸은 "합계 : 10,120 과세 : 10,120 면세 : 0" 처럼 생겼다
+        var sum = txt(c[iSum]);
+        var amount = num((sum.match(/합계\s*:\s*([\d,]+)/) || [])[1] || sum);
         out.push({
-          side: side,
-          partner: clean((info.split(/\s{2,}|\|/)[0] || info).slice(0, 60)),
-          settleDate: dt ? dt[1] + '-' + ('0' + dt[2]).slice(-2) + '-' + ('0' + dt[3]).slice(-2) : null,
-          cnt: iCnt >= 0 ? num(txt(c[iCnt])) : null,
-          amount: num(txt(c[iAmt])),
-          accState: (info.match(/(정산완료|정산대기|미정산|완료|대기)/) || [])[1] || null,
+          side: side, bjId: bjId, partner: partner,
+          settleDate: per[1] || per[0] || null,
+          periodFrom: per[0] || null, periodTo: per[1] || per[0] || null,
+          amount: amount,
+          shipFee: iShip >= 0 ? num(txt(c[iShip])) : null,
+          accState: iState >= 0
+            ? ((txt(c[iState]).match(/(작업중|정산완료|정산대기|미정산|확정|대기)/) || [])[1] || null)
+            : null,
         });
       }
       return out;
