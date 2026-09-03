@@ -169,76 +169,100 @@
   }
 
   // ── 2) 상품 · 옵션 ──────────────────────────────────────────────────
+  //   실제 칸 배치 (2026-09-03 실측, 10칸)
+  //     0 선택  1 No  2 이미지  3 [상품코드] 상품명  4 (공급사번호)공급사명
+  //     5 옵션  6 배송비  7 사용여부  8 등록자  9 관리
+  //   ⚠ 상품 고유번호는 화면 어디에도 글자로 없다. 관리 칸의 단추 안에 있다.
+  //   ⚠ 옵션에는 **옵션코드가 없다**. 옵션명 + 값 세 개뿐이다.
+  //        · 참기름 180ml 1병 (0 / 0 / 3,200)
+  //      그래서 열쇠는 상품번호 + 옵션명 으로 잡는다 (121 참고).
   function grabGoods() {
     return get('/Good/goods_list?pagesize=1000').then(function (d) {
-      var t = tableWith(d, ['상품명', '공급사']);
+      var t = tableWith(d, ['상품코드', '공급사', '옵션명']);
       if (!t) throw new Error('상품 표를 찾지 못했습니다 (화면 구조 변경)');
       var goods = [], options = [];
       for (var i = 1; i < t.rows.length; i++) {
-        var c = t.rows[i].cells;
-        if (!c || c.length < 5) continue;
-        // 상품 고유번호는 행 안의 입력칸/링크에서 찾는다
-        var idEl = t.rows[i].querySelector('[name^="g_idx"],[value][name*="idx"],a[href*="idx="]');
-        var gid = null;
-        if (idEl) {
-          var v = idEl.getAttribute('value') || idEl.getAttribute('href') || '';
-          var m = String(v).match(/(\d{4,})/);
-          if (m) gid = m[1];
-        }
-        var nameCell = txt(c[2]);
-        var code = (nameCell.match(/\(([^)]+)\)/) || [])[1] || null;
-        var gname = nameCell.replace(/\([^)]*\)/, '').trim();
-        var supplier = clean(txt(c[3]));
-        if (!gname) continue;
-        if (gid) goods.push({ id: gid, code: code, name: gname, supplier: supplier, active: null });
+        var row = t.rows[i];
+        var c = row.cells;
+        if (!c || c.length < 8) continue;
 
-        // 옵션 칸: "옵션명 (판매가 / 판매사공급가 / 공급사공급가)" 가 줄마다 들어 있다
-        var optLines = (c[4] ? (c[4].innerHTML || '') : '')
-          .replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]+>/g, '\n')
-          .split('\n').map(function (x) { return x.replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim(); })
-          .filter(Boolean);
-        optLines.forEach(function (line) {
-          var oc = (line.match(/\b(\d{6,})\b/) || [])[1];
-          var prices = (line.match(/[\d,]+/g) || []).map(function (x) { return num(x); });
-          if (!oc) return;
+        var nameCell = txt(c[3]);                        // "[SOFS11331662] 참담_참기름,들기름"
+        var code = (nameCell.match(/\[([^\]]+)\]/) || [])[1] || null;
+        var gname = nameCell.replace(/\[[^\]]*\]/, '').trim();
+        if (!gname) continue;
+
+        // 고유번호: 관리 단추 안 → 없으면 상품코드 뒤 숫자
+        var gid = null;
+        var btn = c[9] ? c[9].querySelector('button,a') : null;
+        var oc = btn ? (btn.getAttribute('onclick') || btn.getAttribute('href') || '') : '';
+        var m = String(oc).match(/(\d{5,})/);
+        if (m) gid = m[1];
+        if (!gid && code) { var m2 = code.match(/(\d{5,})/); if (m2) gid = m2[1]; }
+        if (!gid) continue;                              // 번호 없이 담으면 다음에 중복된다
+
+        var supCell = txt(c[4]);                         // "(42800)참담(참기름,들기름)"
+        var supIdx = (supCell.match(/^\((\d+)\)/) || [])[1] || null;
+        var supplier = clean(supCell.replace(/^\(\d+\)/, ''));
+        var active = /사용/.test(txt(c[7])) && !/미사용|중지/.test(txt(c[7]));
+
+        goods.push({ id: gid, code: code, name: gname,
+                     supplyIdx: supIdx, supplier: supplier, active: active });
+
+        // 옵션 줄: "· 옵션명 (판매가 / 판매사공급가 / 공급사공급가)"
+        var ps = c[5] ? [].slice.call(c[5].querySelectorAll('p')) : [];
+        ps.forEach(function (p) {
+          var line = txt(p);
+          if (line.indexOf('·') !== 0) return;           // "[과세]" 같은 머리줄은 건너뛴다
+          line = line.replace(/^·\s*/, '');
+          var pr = line.match(/\(([^)]*)\)\s*$/);
+          var nums = pr ? pr[1].split('/').map(function (x) { return num(x); }) : [];
+          var oname = (pr ? line.slice(0, pr.index) : line).trim();
+          if (!oname) return;
           options.push({
-            optionCode: oc, goodsId: gid, goodsCode: code,
-            name: line.replace(/\b\d{6,}\b/, '').trim() || null,
-            salePrice: prices[1] != null ? prices[1] : null,
-            sellerPrice: prices[2] != null ? prices[2] : null,
-            supplyPrice: prices[3] != null ? prices[3] : null,
-            supplier: supplier, active: null,
+            optionCode: null, goodsId: gid, goodsCode: code, name: oname,
+            salePrice: nums[0] != null ? nums[0] : null,
+            sellerPrice: nums[1] != null ? nums[1] : null,
+            supplyPrice: nums[2] != null ? nums[2] : null,
+            supplier: supplier, active: active,
           });
         });
       }
       return { goods: goods, options: options };
     });
   }
-
   // ── 3) 정산 ─────────────────────────────────────────────────────────
+  //   ⚠ 이 사이트는 **모든 화면 맨 위에 안내표**가 하나 깔려 있다.
+  //      "정산 | 세금계산서가 발행되었습니다 …"
+  //      그래서 ['정산'] 으로 찾으면 그 안내표를 잡는다. 실제로 0줄이 나왔다.
+  //      머리글 낱말을 넉넉히 줘서 진짜 표를 집는다.
+  //   실제 칸: [선택] 정산정보 | 건수 | 금액 | 관리
   function grabSettle(side, path) {
     return get(path + '?pagesize=1000').then(function (d) {
-      var t = tableWith(d, ['정산']);
-      if (!t) return [];
+      var t = tableWith(d, ['정산정보', '건수', '금액']);
+      if (!t || !t.rows[0]) return [];
+      var head = [].map.call(t.rows[0].cells, function (c) { return txt(c); });
+      function ix(w) { for (var i = 0; i < head.length; i++) if (head[i].indexOf(w) >= 0) return i; return -1; }
+      var iInfo = ix('정산정보'), iCnt = ix('건수'), iAmt = ix('금액');
+      if (iInfo < 0 || iAmt < 0) return [];
       var out = [];
       for (var i = 1; i < t.rows.length; i++) {
         var c = t.rows[i].cells;
-        if (!c || c.length < 3) continue;
-        var info = txt(c[0]);
+        if (!c || c.length <= iAmt) continue;
+        var info = txt(c[iInfo]);
         if (!info) continue;
-        var dt = (info.match(/(20\d{2})[.\-\/](\d{1,2})[.\-\/](\d{1,2})/) || []);
+        var dt = info.match(/(20\d{2})[.\-\/](\d{1,2})[.\-\/](\d{1,2})/);
         out.push({
           side: side,
           partner: clean((info.split(/\s{2,}|\|/)[0] || info).slice(0, 60)),
-          settleDate: dt.length ? dt[1] + '-' + ('0' + dt[2]).slice(-2) + '-' + ('0' + dt[3]).slice(-2) : null,
-          cnt: num(txt(c[1])), amount: num(txt(c[2])),
+          settleDate: dt ? dt[1] + '-' + ('0' + dt[2]).slice(-2) + '-' + ('0' + dt[3]).slice(-2) : null,
+          cnt: iCnt >= 0 ? num(txt(c[iCnt])) : null,
+          amount: num(txt(c[iAmt])),
           accState: (info.match(/(정산완료|정산대기|미정산|완료|대기)/) || [])[1] || null,
         });
       }
       return out;
     });
   }
-
   // ── 4) 미수금 · 미지급금 ────────────────────────────────────────────
   //   ⚠ 이 화면에는 계좌번호·담당자·이메일이 있다. **읽지 않는다.**
   //      업체명 · 최종기준일 · 정산금액 · 지급(입금)금액 · 잔액만 가져온다.
@@ -273,7 +297,8 @@
   //   ⚠ 이 화면에는 **수령인**이 있다. 그 칸은 읽지 않는다.
   //   배송비가 셋(산출·수정·정산)이다. 손익에 쓸 값은 **정산 배송비**.
   function shipFeeRows(doc) {
-    var t = tableWith(doc, ['배송비']);
+    // ⚠ ['배송비'] 로 찾으면 **검색창**의 '배송비타입' 을 잡는다. 실제로 그랬다.
+    var t = tableWith(doc, ['산출 배송비', '정산 배송비']);
     if (!t || !t.rows[0]) return null;              // 표 모양이 바뀌면 저장하지 않는다
     var head = [].map.call(t.rows[0].cells, function (c) { return txt(c); });
     function ix(want, not) {
