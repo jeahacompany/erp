@@ -100,7 +100,20 @@
 
   // ── ERP 로 보내기 ────────────────────────────────────────────────────
   var seq = 0;
+  // ⚠ 저장 결과를 안 보고 "몇 줄 보냈나" 만 세면, 한 줄도 안 들어갔는데 완료라고 한다.
+  //   2026-09-03 에 정산 870줄이 그렇게 통째로 사라졌다 (ON CONFLICT 불일치로 전부 실패).
+  //   저장이 실패하면 그 단계를 실패로 남긴다.
   function send(kind, rows) {
+    return sendRaw(kind, rows).then(function (r) {
+      if (!r || r.ok === false) {
+        throw new Error('ERP 저장 실패: ' + ((r && r.message) || '이유 없음'));
+      }
+      if (r.result && r.result.error) throw new Error('ERP 저장 실패: ' + r.result.error);
+      return r;
+    });
+  }
+
+  function sendRaw(kind, rows) {
     if (!rows.length) return Promise.resolve({ ok: true, skipped: true });
     var msg = { type: 'BJM_DATA', kind: kind, rows: rows };
     if (BRIDGE) {
