@@ -123,11 +123,23 @@
         }, 300);
       });
     }
+    // ⚠ 창(window.open)은 **사람이 누른 뒤**에만 열린다.
+    //   확장이나 콘솔에서 넣으면 열린 척만 하고 아무것도 안 뜬다.
+    //   그러면 EZ_READY 가 영영 안 와서 5분을 통째로 버린다 (2026-09-03 실제로 겪음).
+    //   프레임은 사람이 안 눌러도 열린다. 창 대신 프레임을 쓴다.
     return new Promise(function (resolve) {
-      var reuse = window.__bjWin && !window.__bjWin.closed;
-      var w = reuse ? window.__bjWin : window.open(ERP_URL, 'erp_bj_receiver');
-      if (!w) return resolve({ ok: false, message: '팝업이 막혔습니다' });
-      window.__bjWin = w;
+      var w;
+      if (window.__bjFrame && window.__bjFrame.isConnected) {
+        w = window.__bjFrame.contentWindow;
+      } else {
+        var f = document.createElement('iframe');
+        f.src = ERP_URL;
+        f.style.cssText = 'position:fixed;left:-9999px;top:0;width:1000px;height:800px;border:0';
+        document.body.appendChild(f);
+        window.__bjFrame = f;
+        w = f.contentWindow;
+      }
+      if (!w) return resolve({ ok: false, message: 'ERP 프레임을 열지 못했습니다' });
       var sent = false, timer = null;
       function push() { if (!sent) { sent = true; w.postMessage(msg, ERP_ORIGIN); } }
       function off() { window.removeEventListener('message', onMsg); clearTimeout(timer); }
@@ -138,8 +150,14 @@
         else if (e.data.type === 'BJM_ERROR') { off(); resolve({ ok: false, message: e.data.message }); }
       }
       window.addEventListener('message', onMsg);
-      if (reuse) setTimeout(push, 300);
-      timer = setTimeout(function () { off(); resolve({ ok: false, message: 'ERP 응답 없음' }); }, 300000);
+      // 준비 신호를 **놓칠 수도** 있다 (프레임이 우리보다 먼저 준비되는 경우).
+      // 신호가 안 와도 그냥 보낸다. 안 그러면 아무 말 없이 5분을 기다린다.
+      setTimeout(push, 2500);
+      // 5분을 조용히 기다리면 무엇이 잘못됐는지 아무도 모른다. 2분에 자르고 이유를 말한다.
+      timer = setTimeout(function () {
+        off();
+        resolve({ ok: false, message: 'ERP 화면이 답하지 않습니다 (ERP 로그인 확인)' });
+      }, 120000);
     });
   }
 
