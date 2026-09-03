@@ -43,7 +43,9 @@
   var DAYTYPE = opt.daytype || 'order_date';
   var DAYTYPES = (opt.daytypes && opt.daytypes.length)
                ? opt.daytypes
-               : [DAYTYPE];
+               // 자동수집은 두 축을 반드시 다 돈다.
+               // 송장일 축을 빼면 매출이 새고, 주문일 축을 빼면 아직 안 나간 주문을 놓친다.
+               : (opt.sync ? ['deliveryNum_updatedate', 'order_date'] : [DAYTYPE]);
   var DRY = !!opt.dryRun;
 
   // ⚠ 한 발주모아 계정을 푸드시그널과 도반글로벌이 같이 쓴다 (사용료가 비싸서).
