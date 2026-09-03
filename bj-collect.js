@@ -611,7 +611,7 @@
           return;
         }
 
-        var tot = { pages: 0, rows: 0, new: 0, changed: 0, errors: 0, lastError: null };
+        var tot = { pages: 0, rows: 0, new: 0, changed: 0, same: 0, errors: 0, lastError: null };
         window.__bjLog = [];
 
         (function step(i) {
@@ -636,6 +636,7 @@
               tot.rows += (res.stat && res.stat.rowsSeen) || 0;
               tot.new += (res.saved && res.saved.new) || 0;
               tot.changed += (res.saved && res.saved.dup) || 0;
+              tot.same += (res.saved && res.saved.same) || 0;
               // 하루를 다 읽었으면 표시해 둔다. PC가 꺼져도 여기서부터 이어받는다.
               return ask({ type: 'BJ_CKPT', rows: [{
                 source: 'orders', daytype: j[2], day: j[0], status: 'DONE',
