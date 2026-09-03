@@ -68,14 +68,20 @@
       .replace(/\s+/g, ' ').trim();
   }
 
+  // ⚠ 로그인이 풀린 것을 "크기" 로 판단하면 안 된다.
+  //   발주모아 로그인 화면은 29KB 라서 "작으면 로그인 화면" 규칙에 안 걸린다.
+  //   실제로 2026-09-03 에 로그인이 풀렸는데도 "0건 수집 완료" 라고 보고했다.
+  //   → **최종 주소**를 본다. /Login/ 으로 끌려갔으면 로그인이 풀린 것이다.
   function get(path) {
-    return fetch(path, { credentials: 'include' }).then(function (r) { return r.text(); })
-      .then(function (h) {
-        if (/name=["']?(userId|password)/.test(h) && h.length < 40000) {
-          throw new Error('AUTH_REQUIRED');
-        }
-        return new DOMParser().parseFromString(h, 'text/html');
-      });
+    return fetch(path, { credentials: 'include' }).then(function (r) {
+      if (/\/Login\//i.test(r.url || '')) throw new Error('AUTH_REQUIRED');
+      return r.text();
+    }).then(function (h) {
+      if (/id=["']?userId["']?/.test(h) && /type=["']?password/.test(h)) {
+        throw new Error('AUTH_REQUIRED');
+      }
+      return new DOMParser().parseFromString(h, 'text/html');
+    });
   }
 
   // 머리글에 이 낱말이 있는 표를 고른다. 크기로 고르면 엉뚱한 걸 잡는다.
@@ -286,10 +292,25 @@
   ];
 
   var log = [];
+  function gotRows(g) {
+    if (!g) return 0;
+    return (g.sellers || 0) + (g.suppliers || 0) + (g.goods || 0) + (g.options || 0) + (g.rows || 0);
+  }
   (function next(i) {
     if (i >= steps.length) {
-      finish('ok', '기준정보 수집 완료', { log: log });
-      done('완료 · ' + log.map(function (x) { return x.name; }).join(' · '));
+      // ⚠ 한 줄도 못 가져왔는데 "완료" 라고 하면 안 된다.
+      //   2026-09-03 에 로그인이 풀린 채로 돌아 "0건 완료" 라고 보고한 적이 있다.
+      //   그건 성공이 아니라 조용한 실패다.
+      var total = log.reduce(function (a, x) { return a + gotRows(x.got); }, 0);
+      var failed = log.filter(function (x) { return !x.ok; }).length;
+      if (total === 0) {
+        finish('error', '한 줄도 가져오지 못했습니다 (로그인·화면 구조 확인)', { log: log });
+        done('한 줄도 못 가져왔습니다. 발주모아 로그인을 확인해주세요.', true);
+        return;
+      }
+      finish(failed ? 'partial' : 'ok',
+             '기준정보 ' + total + '줄' + (failed ? ' · 실패 ' + failed + '개' : ''), { log: log });
+      done('완료 · ' + total + '줄' + (failed ? ' (일부 실패 ' + failed + ')' : ''), !!failed);
       return;
     }
     say('[' + (i + 1) + '/' + steps.length + '] ' + steps[i][0] + ' 읽는 중…');

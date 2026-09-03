@@ -282,9 +282,16 @@
   function fetchPage(page, from, to, daytype, attempt) {
     attempt = attempt || 1;
     return fetch(url(page, from, to, daytype), { credentials: 'include' })
-      .then(function (r) { return r.text(); })
+      .then(function (r) {
+        // ⚠ 로그인 풀림을 "응답이 작으면" 으로 보면 안 된다.
+        //   발주모아 로그인 화면은 29KB 라서 5KB 기준에 안 걸린다.
+        //   실제로 2026-09-03 에 풀린 채로 돌아 "0건 성공" 을 보고한 적이 있다.
+        //   최종 주소가 /Login/ 이면 그냥 풀린 것이다.
+        if (/\/Login\//i.test(r.url || '')) throw new Error('AUTH_REQUIRED');
+        return r.text();
+      })
       .then(function (html) {
-        if (/name=["']?(userid|login)/i.test(html) && html.length < 5000) {
+        if (/id=["']?userId["']?/.test(html) && /type=["']?password/.test(html)) {
           throw new Error('AUTH_REQUIRED');
         }
         var doc = new DOMParser().parseFromString(html, 'text/html');
