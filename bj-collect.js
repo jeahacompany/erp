@@ -258,6 +258,25 @@
   //   못 찾음   → 서버가 잠깐 엉뚱한 응답(오류/점검 화면)을 준 것일 수 있다 → 다시 시도
   //   머리글 다름 → 진짜 화면 구조가 바뀐 것 → 바로 멈춘다 (틀린 값을 넣지 않는다)
   var PAGE_RETRY = 3;
+
+  // ── 남의 서버를 때리지 않는다 ────────────────────────────────────────
+  // 발주모아는 우리 서버가 아니다. 쉬지 않고 연달아 부르면 그쪽에 부담이 되고,
+  // 우리도 차단당하면 아무것도 못 하게 된다.
+  //   pageDelayMs  페이지 사이에 무조건 쉰다
+  //   jitterMs     기계처럼 정확히 같은 간격이 되지 않게 흔들어 준다
+  //   백오프       실패하면 쉬는 시간을 배로 늘린다 (fetchPage 안에 이미 있다)
+  //   차단기       연속으로 이만큼 실패하면 그냥 멈춘다
+  var TUNE = {
+    pageDelayMs: Number(opt.pageDelayMs) || 400,
+    jitterMs: Number(opt.jitterMs) || 300,
+    breakerFails: Number(opt.breakerFails) || 5,
+  };
+  var failStreak = 0;
+
+  function rest() {
+    var ms = TUNE.pageDelayMs + Math.floor(Math.random() * (TUNE.jitterMs + 1));
+    return new Promise(function (r) { setTimeout(r, ms); });
+  }
   function fetchPage(page, from, to, daytype, attempt) {
     attempt = attempt || 1;
     return fetch(url(page, from, to, daytype), { credentials: 'include' })
@@ -483,7 +502,9 @@
       return fetchPage(page, from, to, AXIS).then(function (res) {
         if (total == null) total = res.total;
         all = all.concat(res.rows);
-        if (res.rows.length >= PAGE_SIZE && page < MAX_PAGES) return loop(page + 1);
+        if (res.rows.length >= PAGE_SIZE && page < MAX_PAGES) {
+          return rest().then(function () { return loop(page + 1); });
+        }
         return null;
       });
     }
@@ -523,6 +544,121 @@
         return { ok: r.ok, stat: stat, saved: r.result || null, reason: r.reason };
       });
     });
+  }
+
+  // ── ERP 에 물어보기 (계획·체크포인트·작업종료) ───────────────────────
+  // 수집기는 ERP 로그인 토큰을 갖지 않는다. 일부러 그렇게 뒀다.
+  // 그래서 "무엇을 읽어야 하는지" 도 스스로 정하지 않고 ERP 화면에 물어본다.
+  function ask(msg, okType, errType, waitMs) {
+    return new Promise(function (resolve) {
+      var reuse = window.__bjWin && !window.__bjWin.closed;
+      var w = reuse ? window.__bjWin : window.open(ERP_URL, 'erp_bj_receiver');
+      if (!w) { return resolve({ ok: false, message: '팝업이 막혔습니다' }); }
+      window.__bjWin = w;
+      var sent = false, timer = null;
+      function push() { if (!sent) { sent = true; w.postMessage(msg, ERP_ORIGIN); } }
+      function off() { window.removeEventListener('message', onMsg); clearTimeout(timer); }
+      function onMsg(e) {
+        if (e.origin !== ERP_ORIGIN || !e.data) return;
+        if (e.data.type === 'EZ_READY') return push();
+        if (e.data.type === okType) { off(); resolve({ ok: true, data: e.data }); }
+        else if (e.data.type === errType) { off(); resolve({ ok: false, message: e.data.message }); }
+      }
+      window.addEventListener('message', onMsg);
+      if (reuse) setTimeout(push, 300);
+      timer = setTimeout(function () {
+        off(); resolve({ ok: false, message: 'ERP가 응답하지 않습니다' });
+      }, waitMs || 60000);
+    });
+  }
+
+  // ── 자동수집 (3단계) ─────────────────────────────────────────────────
+  //   fast       15분마다 · 최근 2일  — 오늘 들어온 것을 빨리 반영
+  //   reconcile  1시간마다 · 최근 7일 — 뒤늦게 바뀐 것(송장·취소)을 맞춘다
+  //   deep       하루 1번 · 최근 90일 — 통째로 다시 대조. 빠진 날을 찾는다
+  //   backfill   처음 긁어오기. 체크포인트로 이어받는다
+  // 주기는 코드에 박지 않는다. ERP 설정(bj_sync_config)에서 읽는다.
+  if (opt.sync) {
+    var KIND = opt.sync;
+    say('자동수집 계획을 ERP에 물어보는 중… (' + KIND + ')');
+    ask({ type: 'BJ_PLAN_REQ', kind: KIND, source: 'orders', daytypes: DAYTYPES },
+        'BJ_PLAN', 'BJ_PLAN_ERROR')
+      .then(function (r) {
+        if (!r.ok) {
+          finish('error', '계획을 받지 못했습니다: ' + (r.message || ''));
+          done('자동수집을 시작하지 못했습니다: ' + (r.message || ''), true);
+          return;
+        }
+        var p = r.data;
+        var cfg = p.config || {};
+        TUNE.pageDelayMs = Number(cfg.pageDelayMs) || TUNE.pageDelayMs;
+        TUNE.jitterMs = Number(cfg.jitterMs) || TUNE.jitterMs;
+        TUNE.breakerFails = Number(cfg.breakerFails) || TUNE.breakerFails;
+
+        // 하루 단위로 편다. 한 번에 넓게 부르면 응답이 8MB 를 넘어 터진다.
+        var jobs = [];
+        (p.plan || []).forEach(function (g) {
+          (g.days || []).forEach(function (d) { jobs.push([d, d, g.daytype]); });
+        });
+        if (!jobs.length) {
+          say('새로 읽을 날이 없습니다.');
+          ask({ type: 'BJ_SYNC_DONE', jobId: p.jobId, status: 'SUCCESS',
+                stat: { pages: 0, rows: 0, errors: 0 } }, 'BJ_DONE_OK', null, 30000);
+          finish('ok', '읽을 것이 없습니다');
+          done('이미 최신입니다.');
+          return;
+        }
+
+        var tot = { pages: 0, rows: 0, new: 0, changed: 0, errors: 0, lastError: null };
+        window.__bjLog = [];
+
+        (function step(i) {
+          if (i >= jobs.length) {
+            var st = tot.errors ? (tot.rows ? 'PARTIAL' : 'FAILED') : 'SUCCESS';
+            ask({ type: 'BJ_SYNC_DONE', jobId: p.jobId, status: st, stat: tot },
+                'BJ_DONE_OK', null, 30000)
+              .then(function () {
+                finish(tot.errors ? 'error' : 'ok',
+                       KIND + ' 수집 끝 · 날 ' + jobs.length + ' · 줄 ' + tot.rows +
+                       (tot.errors ? ' · 실패 ' + tot.errors : ''), { log: window.__bjLog });
+                done(KIND + ' 수집 완료 · ' + jobs.length + '일 · ' + tot.rows + '줄' +
+                     (tot.errors ? ' · 실패 ' + tot.errors + '일' : ''), !!tot.errors);
+              });
+            return;
+          }
+          var j = jobs[i];
+          say('[' + (i + 1) + '/' + jobs.length + '] ' + j[0] + ' (' + j[2] + ')');
+          runRange(j[0], j[1], j[2]).then(function (res) {
+            if (res.ok) {
+              failStreak = 0;
+              tot.rows += (res.stat && res.stat.rowsSeen) || 0;
+              tot.new += (res.saved && res.saved.new) || 0;
+              tot.changed += (res.saved && res.saved.dup) || 0;
+              // 하루를 다 읽었으면 표시해 둔다. PC가 꺼져도 여기서부터 이어받는다.
+              return ask({ type: 'BJ_CKPT', rows: [{
+                source: 'orders', daytype: j[2], day: j[0], status: 'DONE',
+                rows: (res.stat && res.stat.rowsSeen) || 0 }] }, 'BJ_CKPT_OK', null, 30000);
+            }
+            failStreak++; tot.errors++; tot.lastError = res.reason || '실패';
+            return null;
+          }).catch(function (e) {
+            failStreak++; tot.errors++;
+            tot.lastError = String((e && e.message) || e);
+            window.__bjLog.push({ day: j[0], daytype: j[2], ok: false, reason: tot.lastError });
+          }).then(function () {
+            // 차단기 — 연달아 실패하면 더 두드리지 않고 멈춘다.
+            if (failStreak >= TUNE.breakerFails) {
+              ask({ type: 'BJ_SYNC_DONE', jobId: p.jobId, status: 'FAILED',
+                    stat: tot }, 'BJ_DONE_OK', null, 30000);
+              finish('error', '연속 ' + failStreak + '회 실패로 중단했습니다', { log: window.__bjLog });
+              done('연속 ' + failStreak + '회 실패해서 멈췄습니다. 발주모아 상태를 확인해주세요.', true);
+              return;
+            }
+            rest().then(function () { step(i + 1); });
+          });
+        })(0);
+      });
+    return;
   }
 
   // ── 실행 ─────────────────────────────────────────────────────────────
