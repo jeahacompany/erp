@@ -428,6 +428,22 @@
   // 그 뒤로는 같은 창에 계속 건넨다. 그래야 여러 날짜를 이어서 넣을 수 있다.
   // (열려 있는 창에 보내는 것은 팝업 차단과 무관하다)
   function send(payloads, stat) {
+    if (BRIDGE) {
+      say('ERP 로 보내는 중… (' + payloads.length + '개 판매처)');
+      return bridgeSend({ type: 'BJ_DATA', payloads: payloads, stat: stat },
+                        'BJ_SAVED', 'BJ_ERROR', 1200000)
+        .then(function (r) {
+          if (!r.ok) {
+            finish('error', 'ERP: ' + (r.message || ''));
+            done('ERP 쪽에서 막혔습니다: ' + (r.message || ''), true);
+            return { ok: false, reason: r.message };
+          }
+          var res = (r.data && r.data.result) || {};
+          finish('ok', '저장 완료', { result: res, stat: stat });
+          done('저장 · 신규 ' + (res.new || 0) + ' · 갱신 ' + (res.dup || 0));
+          return { ok: true, result: res };
+        });
+    }
     return new Promise(function (resolve) {
       say('ERP 로 보내는 중… (' + payloads.length + '개 판매처)');
       var reuse = window.__bjWin && !window.__bjWin.closed;
@@ -551,7 +567,40 @@
   // ── ERP 에 물어보기 (계획·체크포인트·작업종료) ───────────────────────
   // 수집기는 ERP 로그인 토큰을 갖지 않는다. 일부러 그렇게 뒀다.
   // 그래서 "무엇을 읽어야 하는지" 도 스스로 정하지 않고 ERP 화면에 물어본다.
+  // ── 확장 프로그램이 대신 날라줄 때 ───────────────────────────────────
+  // 확장에서 이 스크립트를 넣으면 사람이 누른 것이 아니라서 window.open 이 막힌다.
+  // 그래서 창을 열지 않고 **우편함**만 쓴다.
+  //   여기가 __bjMsgOut 에 넣어 두면 → 확장이 ERP 탭에 갖다 주고 → __bjMsgIn 에 답을 놓는다.
+  // (EZSTORAGE 수집기가 쓰는 방식과 같다. 확장은 ERP 토큰을 여전히 갖지 않는다)
+  var BRIDGE = !!window.__bjBridge;
+  var bridgeSeq = 0;
+
+  function bridgeSend(msg, okType, errType, waitMs) {
+    return new Promise(function (resolve) {
+      var id = ++bridgeSeq;
+      window.__bjMsgIn = null;
+      window.__bjMsgOut = { id: id, msg: msg };
+      var t0 = Date.now();
+      var timer = setInterval(function () {
+        var got = window.__bjMsgIn;
+        if (got && got.id === id) {
+          clearInterval(timer);
+          window.__bjMsgIn = null;
+          var d = got.reply || {};
+          if (d.type === okType) return resolve({ ok: true, data: d });
+          return resolve({ ok: false, message: d.message || '알 수 없는 응답' });
+        }
+        if (Date.now() - t0 > (waitMs || 600000)) {
+          clearInterval(timer);
+          window.__bjMsgOut = null;
+          resolve({ ok: false, message: 'ERP가 응답하지 않습니다' });
+        }
+      }, 300);
+    });
+  }
+
   function ask(msg, okType, errType, waitMs) {
+    if (BRIDGE) return bridgeSend(msg, okType, errType, waitMs);
     return new Promise(function (resolve) {
       var reuse = window.__bjWin && !window.__bjWin.closed;
       var w = reuse ? window.__bjWin : window.open(ERP_URL, 'erp_bj_receiver');
