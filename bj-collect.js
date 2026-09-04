@@ -680,6 +680,7 @@
               .then(function () {
                 finish(tot.errors ? 'error' : 'ok',
                        KIND + ' 수집 끝 · 날 ' + jobs.length + ' · 줄 ' + tot.rows +
+                       (tot.lastError ? ' · 이유: ' + tot.lastError : '') +
                        (tot.errors ? ' · 실패 ' + tot.errors : ''), { log: window.__bjLog });
                 done(KIND + ' 수집 완료 · ' + jobs.length + '일 · ' + tot.rows + '줄' +
                      (tot.errors ? ' · 실패 ' + tot.errors + '일' : ''), !!tot.errors);
@@ -700,7 +701,10 @@
                 source: 'orders', daytype: j[2], day: j[0], status: 'DONE',
                 rows: (res.stat && res.stat.rowsSeen) || 0 }] }, 'BJ_CKPT_OK', null, 30000);
             }
+            // ⚠ 실패했는데 이유를 안 남기면 "실패 4" 만 뜨고 왜인지 아무도 모른다.
+            //   던지지 않고 { ok:false } 로 돌아오는 실패도 똑같이 적어 둔다.
             failStreak++; tot.errors++; tot.lastError = res.reason || '실패';
+            window.__bjLog.push({ day: j[0], daytype: j[2], ok: false, reason: tot.lastError });
             return null;
           }).catch(function (e) {
             failStreak++; tot.errors++;
