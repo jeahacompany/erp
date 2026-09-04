@@ -281,19 +281,21 @@
   }
   function fetchPage(page, from, to, daytype, attempt) {
     attempt = attempt || 1;
+    var lastUrl = '';
     return fetch(url(page, from, to, daytype), { credentials: 'include' })
       .then(function (r) {
-        // ⚠ 로그인 풀림을 "응답이 작으면" 으로 보면 안 된다.
-        //   발주모아 로그인 화면은 29KB 라서 5KB 기준에 안 걸린다.
-        //   실제로 2026-09-03 에 풀린 채로 돌아 "0건 성공" 을 보고한 적이 있다.
-        //   최종 주소가 /Login/ 이면 그냥 풀린 것이다.
-        if (/\/Login\//i.test(r.url || '')) throw new Error('AUTH_REQUIRED');
+        // ⚠ 로그인 풀림은 세 가지 모습으로 온다. 셋 다 봐야 한다.
+        //   ① /Login/ 으로 끌려감  ② 로그인 화면 HTML  ③ 98바이트 <script> 조각(2026-09-04)
+        //   크기로 판단하면 안 된다 — 로그인 화면은 29KB 다.
+        lastUrl = r.url || '';
         return r.text();
       })
       .then(function (html) {
+        if (/\/Login\//i.test(lastUrl)) throw new Error('AUTH_REQUIRED');
         if (/id=["']?userId["']?/.test(html) && /type=["']?password/.test(html)) {
           throw new Error('AUTH_REQUIRED');
         }
+        if (/location[^;<]{0,60}\/Login\//i.test(html)) throw new Error('AUTH_REQUIRED');
         var doc = new DOMParser().parseFromString(html, 'text/html');
         var t = bigTable(doc);
 

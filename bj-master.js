@@ -72,14 +72,28 @@
   //   발주모아 로그인 화면은 29KB 라서 "작으면 로그인 화면" 규칙에 안 걸린다.
   //   실제로 2026-09-03 에 로그인이 풀렸는데도 "0건 수집 완료" 라고 보고했다.
   //   → **최종 주소**를 본다. /Login/ 으로 끌려갔으면 로그인이 풀린 것이다.
+  // ── 로그인이 풀렸는지 판정 ────────────────────────────────────────────
+  // 이걸 세 번 틀렸다. 발주모아는 세 가지 다른 모습으로 "로그인하세요" 를 말한다.
+  //   ① 로그인 화면으로 끌고 간다        → 최종 주소에 /Login/
+  //   ② 로그인 화면 HTML 을 그냥 준다     → userId + password 입력칸
+  //   ③ **98바이트짜리 <script> 조각**    → 200 OK, 주소도 그대로, 입력칸도 없다
+  //      2026-09-04 실측. ①②를 둘 다 통과해서 "0건 수집 완료" 가 될 뻔했다.
+  // 크기로 판단하지 않는다 (로그인 화면은 29KB 다). 셋 다 본다.
+  function isLoggedOut(url, html) {
+    if (/\/Login\//i.test(url || '')) return true;
+    if (/id=["']?userId["']?/.test(html) && /type=["']?password/.test(html)) return true;
+    // 자바스크립트로 로그인 화면에 던지는 조각
+    if (/location[^;<]{0,60}\/Login\//i.test(html)) return true;
+    return false;
+  }
+
   function get(path) {
+    var last = '';
     return fetch(path, { credentials: 'include' }).then(function (r) {
-      if (/\/Login\//i.test(r.url || '')) throw new Error('AUTH_REQUIRED');
+      last = r.url || '';
       return r.text();
     }).then(function (h) {
-      if (/id=["']?userId["']?/.test(h) && /type=["']?password/.test(h)) {
-        throw new Error('AUTH_REQUIRED');
-      }
+      if (isLoggedOut(last, h)) throw new Error('AUTH_REQUIRED');
       return new DOMParser().parseFromString(h, 'text/html');
     });
   }
