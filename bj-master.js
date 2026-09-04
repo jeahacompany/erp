@@ -22,6 +22,72 @@
 (function () {
   'use strict';
 
+  // ── 발주모아 요청 문지기 (공용) ──────────────────────────────────────
+  // 왜 필요한가
+  //   2026-09-04, 같은 화면에 요청을 연달아 던졌더니 발주모아가 **응답을 아예 멈췄다.**
+  //   수집기들은 각자 쉬는 시간을 갖고 있었지만, 서로를 몰라서 동시에 두드릴 수 있었다.
+  //   남의 서버다. 한 번에 하나씩, 쉬면서, 막히면 물러난다.
+  //
+  //   · 한 줄로 세운다(single-flight) — 같은 탭의 수집기들이 이 문지기 하나를 같이 쓴다
+  //   · 요청 사이에 무조건 쉰다 + 흔든다(jitter)
+  //   · 429/5xx 면 물러난다(exponential backoff, 최대 2분)
+  //   · 응답이 없으면 30초에 끊는다(timeout)
+  //   · 네 번까지만 다시 해 보고 그 뒤엔 실패로 알린다
+  if (!window.__bjNet) {
+    window.__bjNet = (function () {
+      var chain = Promise.resolve();
+      var coolUntil = 0;      // 이 시각까지는 새 요청을 시작하지 않는다
+      var lastFails = 0;
+      var MIN = 450, JIT = 350, TIMEOUT = 30000, MAX_TRY = 4, COOL_MAX = 120000;
+
+      function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+      function backoff(n) { return Math.min(COOL_MAX, 2000 * Math.pow(2, n)); }
+
+      function once(url, tryNo) {
+        var ctl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+        var timer = ctl ? setTimeout(function () { ctl.abort(); }, TIMEOUT) : null;
+        var opt = { credentials: 'include' };
+        if (ctl) opt.signal = ctl.signal;
+        return fetch(url, opt).then(function (r) {
+          if (timer) clearTimeout(timer);
+          // 너무 많이 두드렸거나(429) 서버가 아플 때(5xx) 는 물러난다
+          if (r.status === 429 || r.status >= 500) {
+            lastFails++;
+            var w = backoff(tryNo);
+            coolUntil = Date.now() + w;
+            if (tryNo >= MAX_TRY) {
+              throw new Error('발주모아가 응답하지 않습니다 (' + r.status + '). 잠시 뒤 다시 합니다.');
+            }
+            return sleep(w).then(function () { return once(url, tryNo + 1); });
+          }
+          lastFails = 0;
+          return r;
+        }).catch(function (e) {
+          if (timer) clearTimeout(timer);
+          lastFails++;
+          if (tryNo >= MAX_TRY) throw e;
+          var w = backoff(tryNo);
+          coolUntil = Date.now() + w;
+          return sleep(w).then(function () { return once(url, tryNo + 1); });
+        });
+      }
+
+      return {
+        get: function (url) {
+          var p = chain.then(function () {
+            var wait = Math.max(0, coolUntil - Date.now()) +
+                       MIN + Math.floor(Math.random() * (JIT + 1));
+            return sleep(wait);
+          }).then(function () { return once(url, 1); });
+          // 하나가 실패해도 줄은 계속 이어진다
+          chain = p.then(function () {}, function () {});
+          return p;
+        },
+        state: function () { return { fails: lastFails, coolUntil: coolUntil }; },
+      };
+    })();
+  }
+
   var ERP_ORIGIN = 'https://jeahacompany.github.io';
   var ERP_URL = ERP_ORIGIN + '/erp/data/ez/?receive=1';
   var opt = window.__bjmOptions || {};
@@ -89,7 +155,7 @@
 
   function get(path) {
     var last = '';
-    return fetch(path, { credentials: 'include' }).then(function (r) {
+    return window.__bjNet.get(path).then(function (r) {
       last = r.url || '';
       return r.text();
     }).then(function (h) {
