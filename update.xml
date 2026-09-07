@@ -1,0 +1,9 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<!-- 크롬이 이 파일을 보고 확장을 자동으로 받아간다.
+     사람이 chrome://extensions 에서 새로고침할 일이 없어진다.
+     판번호는 extension/manifest.json 에서 그대로 가져온다 (손으로 적지 않는다). -->
+<gupdate xmlns='http://www.google.com/update2/response' protocol='2.0'>
+  <app appid='fiafjhdnjdehbihmmpaemnpkhjghgdcg'>
+    <updatecheck codebase='https://jeahacompany.github.io/erp/erp-ext.crx' version='1.11.0' />
+  </app>
+</gupdate>
