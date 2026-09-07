@@ -408,7 +408,13 @@
   // 클릭이 있으므로 창을 열어도 팝업 차단에 걸리지 않는다.
   function send(payload) {
     say('ERP 창으로 보내는 중…');
-    var w = window.open(ERP_URL, 'erp_ez_receiver');
+    // ⚠ 2026-09-07 — 읽기가 몇 분 걸리면 그 사이에 **클릭 권한이 만료돼** 창이 안 열린다.
+    //   그러면 다 읽어놓고 저장을 못 해 통째로 버린다(발주모아 쪽에서 실제로 겪었다).
+    //   → 미리 열어 둔 창이 있으면 그것을 쓴다.
+    var w = (window.__ezWin && !window.__ezWin.closed)
+      ? window.__ezWin
+      : window.open(ERP_URL, 'erp_ez_receiver');
+    if (w) window.__ezWin = w;
     if (!w) {
       finish(false, '팝업 차단됨');
       done('팝업이 막혔습니다. 주소창 오른쪽에서 팝업을 허용한 뒤 다시 눌러주세요.', true);
@@ -420,20 +426,56 @@
       window.removeEventListener('message', onMsg);
       clearTimeout(timer);
     }
+    function onTimeout() {
+      cleanup();
+      finish(false, 'ERP 가 응답하지 않음 (ERP 로그인 확인 필요)');
+      done('ERP가 응답하지 않습니다. ERP에 로그인돼 있는지 확인해주세요.', true);
+    }
+
+    // ⚠ 2026-09-07 — 송장은 EZ_DATA 로 안 들어간다. **별도 메시지(EZ_INVOICES)** 여야 한다.
+    //   그걸 아무도 안 보내서 송장 13,637건이 넉 달 동안 조용히 버려졌다.
+    //   한 번에 크게 보내면 시간초과가 나므로 100건씩 나누고, 마지막에만 last:true.
+    var invRows = (payload && payload.invoices) || [];
+    var invAt = 0, invTotal = 0, phase = 'data', firstResult = null;
+
+    function sendNextInvoices(target) {
+      if (invAt >= invRows.length) {
+        cleanup();
+        var rr = firstResult || {};
+        finish(true, '저장 완료', rr);
+        done('보냈습니다 · 재고 ' + (rr.stock || 0) + ' · 입출고 ' + (rr.moves || 0) +
+             ' · 입고 ' + (rr.inbound || 0) + ' · 반품 ' + (rr.returns || 0) +
+             ' · 송장 ' + invTotal);
+        return;
+      }
+      var part = invRows.slice(invAt, invAt + 100);
+      var isLast = invAt + 100 >= invRows.length;
+      invAt += 100;
+      say('송장 저장 ' + Math.min(invAt, invRows.length) + '/' + invRows.length);
+      target.postMessage({ type: 'EZ_INVOICES', rows: part, last: isLast }, ERP_ORIGIN);
+    }
 
     function onMsg(e) {
       if (e.origin !== ERP_ORIGIN || !e.data) return;
+      var target = e.source || w;
       if (e.data.type === 'EZ_READY' && !sent) {
         sent = true;
-        (e.source || w).postMessage({ type: 'EZ_DATA', payload: payload }, ERP_ORIGIN);
+        target.postMessage({ type: 'EZ_DATA', payload: payload }, ERP_ORIGIN);
       } else if (e.data.type === 'EZ_SAVED') {
-        var r = e.data.result || {};
-        cleanup();
-        finish(true, '저장 완료', r);
-        done(
-          '보냈습니다 · 재고 ' + (r.stock || 0) + '건 · 입출고 ' + (r.moves || 0) +
-            '건 · 입고 ' + (r.inbound || 0) + '건'
-        );
+        clearTimeout(timer);          // 진행 중이므로 시간초과를 미룬다
+        timer = setTimeout(onTimeout, 180000);
+        if (phase === 'data') {
+          firstResult = e.data.result || {};
+          if (invRows.length) { phase = 'invoices'; sendNextInvoices(target); return; }
+          cleanup();
+          var r = firstResult;
+          finish(true, '저장 완료', r);
+          done('보냈습니다 · 재고 ' + (r.stock || 0) + '건 · 입출고 ' + (r.moves || 0) +
+               '건 · 입고 ' + (r.inbound || 0) + '건 · 반품 ' + (r.returns || 0) + '건');
+          return;
+        }
+        invTotal += ((e.data.result || {}).invoices || 0);
+        sendNextInvoices(target);
       } else if (e.data.type === 'EZ_ERROR') {
         var m = e.data.message || '알 수 없는 오류';
         cleanup();
@@ -443,11 +485,14 @@
     }
     window.addEventListener('message', onMsg);
 
-    timer = setTimeout(function () {
-      cleanup();
-      finish(false, 'ERP 가 응답하지 않음 (ERP 로그인 확인 필요)');
-      done('ERP가 응답하지 않습니다. ERP에 로그인돼 있는지 확인해주세요.', true);
-    }, 90000);
+    // 미리 열어 둔 창은 EZ_READY 를 이미 보낸 뒤다. 그 신호를 기다리면 영영 안 온다.
+    if (w === window.__ezWin) {
+      setTimeout(function () {
+        if (!sent) { sent = true; w.postMessage({ type: 'EZ_DATA', payload: payload }, ERP_ORIGIN); }
+      }, 500);
+    }
+
+    timer = setTimeout(onTimeout, 90000);
   }
 
   // ── 실행 ──────────────────────────────────────────────────────────────
