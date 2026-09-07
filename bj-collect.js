@@ -514,8 +514,21 @@
             return { ok: false, reason: r.message };
           }
           var res = (r.data && r.data.result) || {};
-          finish('ok', '저장 완료', { result: res, stat: stat });
-          done('저장 · 신규 ' + (res.new || 0) + ' · 갱신 ' + (res.dup || 0));
+          // ⚠⚠ 2026-09-07 — 오늘 하루 종일 수집이 멈춘 진짜 원인이 여기였다.
+          //
+          //   여러 날을 도는 자동수집(opt.sync)에서도 **하루를 저장하자마자**
+          //   finish/done 을 불러 수집 전체를 끝내 버렸다.
+          //   그러면 날짜 반복문 끝에서 보내는 "작업 끝"(BJ_SYNC_DONE) 이 영영 안 나가고,
+          //   ERP 작업 기록이 RUNNING 인 채로 남는다.
+          //   남은 RUNNING 하나가 그 뒤 모든 수집을 막았다. 사람이 네 번 손으로 풀어야 했다.
+          //
+          // → 자동수집일 때는 여기서 끝내지 않는다. 끝내는 것은 날짜 반복문의 몫이다.
+          if (!opt.sync) {
+            finish('ok', '저장 완료', { result: res, stat: stat });
+            done('저장 · 신규 ' + (res.new || 0) + ' · 갱신 ' + (res.dup || 0));
+          } else {
+            say('저장 · 신규 ' + (res.new || 0) + ' · 갱신 ' + (res.dup || 0));
+          }
           return { ok: true, result: res };
         });
     }
