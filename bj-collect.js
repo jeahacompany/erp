@@ -543,9 +543,24 @@
       var reuse = window.__bjWin && !window.__bjWin.closed;
       var w = reuse ? window.__bjWin : window.open(ERP_URL, 'erp_bj_receiver');
       if (!w) {
-        finish('error', '팝업 차단됨');
-        done('팝업이 막혔습니다. 허용 후 다시 눌러주세요.', true);
-        return resolve({ ok: false, reason: 'POPUP_BLOCKED' });
+        // ⚠ 2026-09-07 — 여기서 9,048건을 다 읽어놓고 저장을 못 했다.
+        //   팝업이 막히면(브라우저 기본값이거나, 사람이 누른 지 오래됐거나)
+        //   읽은 것을 통째로 버리고 "허용하고 다시 눌러주세요" 만 띄웠다.
+        //   발주모아를 8쪽이나 다시 읽게 만드는 건 남의 서버에도 못 할 짓이다.
+        //   → 팝업이 안 되면 **보이지 않는 iframe** 으로 같은 화면을 띄운다.
+        //     postMessage 는 팝업이든 iframe 이든 똑같이 오간다. 권한 설정이 필요 없다.
+        say('팝업이 막혀 숨은 창으로 보냅니다…');
+        var fr = document.createElement('iframe');
+        fr.src = ERP_URL;
+        fr.style.cssText = 'position:fixed;left:-9999px;top:-9999px;width:1024px;height:768px;border:0';
+        document.body.appendChild(fr);
+        window.__bjFrame = fr;
+        w = fr.contentWindow;
+        if (!w) {
+          finish('error', '팝업 차단됨');
+          done('팝업이 막혔습니다. 허용 후 다시 눌러주세요.', true);
+          return resolve({ ok: false, reason: 'POPUP_BLOCKED' });
+        }
       }
       window.__bjWin = w;
       var sent = false, timer = null;
