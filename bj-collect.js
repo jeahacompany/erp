@@ -728,15 +728,36 @@
         });
         if (!jobs.length) {
           say('새로 읽을 날이 없습니다.');
+          // ⚠ 예전에는 이 알림을 **기다리지 않고** 바로 끝내버렸다.
+          //   그래서 작업 기록이 RUNNING 인 채 남아 다음 수집을 막았다.
           ask({ type: 'BJ_SYNC_DONE', jobId: p.jobId, status: 'SUCCESS',
-                stat: { pages: 0, rows: 0, errors: 0 } }, 'BJ_DONE_OK', null, 30000);
-          finish('ok', '읽을 것이 없습니다');
-          done('이미 최신입니다.');
+                stat: { pages: 0, rows: 0, errors: 0 } }, 'BJ_DONE_OK', null, 30000)
+            .then(function () {
+              finish('ok', '읽을 것이 없습니다');
+              done('이미 최신입니다.');
+            });
           return;
         }
 
         var tot = { pages: 0, rows: 0, new: 0, changed: 0, same: 0, errors: 0, lastError: null };
         window.__bjLog = [];
+
+        /* ⏱ **한 번에 조금만 한다.**
+         *
+         * ⚠ 2026-09-07 에 하루 종일 겪은 문제.
+         *   처음긁어오기는 600일치라 몇 시간이 걸리는데, 그 긴 작업 하나를
+         *   브라우저가 계속 붙잡고 있어야 했다. 그러다 확장이 시간제한으로 끊거나
+         *   Chrome 이 작업자를 재우면, 그 작업은 "끝났다" 고 알릴 기회 없이 사라지고
+         *   ERP 기록에 RUNNING 으로 남아 **그 뒤 모든 수집을 막았다.**
+         *   사람이 손으로 풀어줘야 했다. 하루에 두 번 그랬다.
+         *
+         * → 시간 예산을 둔다. 예산이 다 되면 **깨끗하게 끝낸다.**
+         *   하루를 읽을 때마다 체크포인트를 찍으므로, 다음 차례가 이어서 한다.
+         *   중간에 꺼져도 잃는 것은 "읽던 하루" 하나뿐이다.
+         *   Chrome 이 작업자를 죽여도 자료 유실은 없다. */
+        var BUDGET_MS = (KIND === 'backfill' || KIND === 'deep') ? 12 * 60 * 1000 : 8 * 60 * 1000;
+        var startedAt = Date.now();
+        var overBudget = function () { return Date.now() - startedAt > BUDGET_MS; };
 
         (function step(i) {
           if (i >= jobs.length) {
@@ -750,6 +771,18 @@
                        (tot.errors ? ' · 실패 ' + tot.errors : ''), { log: window.__bjLog });
                 done(KIND + ' 수집 완료 · ' + jobs.length + '일 · ' + tot.rows + '줄' +
                      (tot.errors ? ' · 실패 ' + tot.errors + '일' : ''), !!tot.errors);
+              });
+            return;
+          }
+          // 예산을 다 썼으면 여기서 **깨끗하게** 끝낸다. 남은 날은 다음 차례가 이어받는다.
+          if (i > 0 && overBudget()) {
+            var left = jobs.length - i;
+            ask({ type: 'BJ_SYNC_DONE', jobId: p.jobId, status: 'PARTIAL', stat: tot },
+                'BJ_DONE_OK', null, 30000)
+              .then(function () {
+                finish('ok', KIND + ' ' + i + '일 하고 넘김 · 남은 ' + left + '일은 다음 차례에',
+                       { log: window.__bjLog });
+                done(KIND + ' ' + i + '일 저장 · 줄 ' + tot.rows + ' · 남은 ' + left + '일은 이어서 합니다');
               });
             return;
           }
