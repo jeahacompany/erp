@@ -245,9 +245,9 @@
   function fetchInbound() {
     say('입고 내역 읽는 중…');
     return gql(
-      'query PS($l:ID!,$s:ID!,$d:DateRange,$t:PreStocksInquiryType){' +
+      'query PS($l:ID!,$s:ID!,$d:DateRange,$t:PreStocksInquiryType,$c:Boolean){' +
         ' preStocksForConfirm(logisticId:$l, sellerId:$s, inquiryDate:$d, inquiryType:$t,' +
-        ' take:1000, skip:0){ totalCount preStocks { id amount scheduledDate confirmedDate' +
+        ' isConfirmed:$c, take:1000, skip:0){ totalCount preStocks { id amount scheduledDate confirmedDate' +
         ' supplier note expiryDate canceledAt productLotNumber { lotNumber }' +
         ' productOption { systemProductCode customerProductCode } } } }',
       {
@@ -255,6 +255,13 @@
         s: ids.sellerId,
         d: { from: iso(DAYS), to: new Date().toISOString() },
         t: 'CREATED',
+        // ⚠⚠ 2026-09-07 — **이 한 줄이 없어서 입고가 넉 달 내내 0건이었다.**
+        //   이 질의 이름이 preStocksForConfirm("확정할 입고") 이라 그런지,
+        //   isConfirmed 를 안 주면 **아직 확정 안 된 것만** 준다.
+        //   그런데 우리 창고는 들어오는 즉시 확정된다. 그래서 늘 0건이었다.
+        //   오류도 안 났다. "입고 0건" 이라고 조용히 지나갔다.
+        //   실측(30일): 안 주면 0건 · true 면 52건 · false 면 0건.
+        c: true,
       }
     ).then(function (d) {
       return (d.preStocksForConfirm.preStocks || [])
@@ -275,6 +282,67 @@
             note: p.note || null,
           };
         });
+    });
+  }
+
+  // ── 4-3. 반품 (실제로 창고에 돌아온 것) ───────────────────────────────
+  //
+  // ⚠ EZ **화면에는 반품 메뉴가 없다.** 그래서 오래도록 "EZ 엔 반품이 없다" 고 알고 있었다.
+  //   API 에는 있다. 화면만 안 보여줄 뿐이다 (2026-09-07 확인).
+  //   양은 적다 — 30일 1건 · 90일 4건 · 1년 7건. 그래도 **없는 것과 모르는 것은 다르다.**
+  //   반품은 금액이 작아도 재고와 클레임에 바로 영향을 준다.
+  //
+  // 발주모아 반품(고객이 판매처에 요청한 것)과 **다른 사실**이다. 섞지 않는다.
+  //   여기 있는 것은 물건이 실제로 창고에 돌아온 기록이다.
+  function fetchReturns() {
+    say('반품 읽는 중…');
+    return gql(
+      'query R($l:ID!,$s:ID!,$d:DateRange!,$t:ReturnOrderInquiryDateType!){' +
+        ' pagedReturnOrders(logisticId:$l, sellerId:$s, inquiryDate:$d, inquiryType:$t,' +
+        ' take:500, skip:0){ totalCount data { id status returnType originInvoiceNum' +
+        ' returnCourierInvoiceNum deliveryFee deliveryPaidType pickupName destinationName' +
+        ' note returnedAt createdAt' +
+        ' returnOrderProducts { id returnOrderId requestAmount category note' +
+        ' productOption { systemProductCode customerProductCode } } } } }',
+      {
+        l: ids.logisticId,
+        s: ids.sellerId,
+        d: { from: iso(DAYS), to: new Date().toISOString() },
+        t: 'REGISTRATION_DATE',
+      }
+    ).then(function (d) {
+      var list = (d.pagedReturnOrders && d.pagedReturnOrders.data) || [];
+      return list.filter(function (r) { return r && r.id; }).map(function (r) {
+        // 상품 줄은 하나로 올 수도, 여러 줄로 올 수도 있다. 둘 다 받는다.
+        var ps = r.returnOrderProducts;
+        ps = !ps ? [] : (Array.isArray(ps) ? ps : [ps]);
+        return {
+          ezId: r.id,
+          status: r.status || null,
+          returnType: r.returnType || null,
+          originInvoice: r.originInvoiceNum || null,
+          returnInvoice: r.returnCourierInvoiceNum || null,
+          deliveryFee: r.deliveryFee || 0,
+          paidType: r.deliveryPaidType || null,
+          pickupName: r.pickupName || null,
+          destinationName: r.destinationName || null,
+          note: r.note || null,
+          returnedAt: r.returnedAt || null,
+          createdAt: r.createdAt || null,
+          items: ps.filter(function (p) { return p && p.id; }).map(function (p) {
+            var po = p.productOption || {};
+            return {
+              ezId: p.id,
+              returnId: p.returnOrderId || r.id,
+              code: po.systemProductCode || null,
+              sku: po.customerProductCode || null,
+              amount: p.requestAmount || 0,
+              category: p.category || null,
+              note: p.note || null,
+            };
+          }),
+        };
+      });
     });
   }
 
@@ -404,11 +472,18 @@
     .then(function (r) { payload.inbound = r; })
     .then(fetchInvoices)
     .then(function (r) { payload.invoices = r; })
+    .then(fetchReturns)
+    .then(function (r) { payload.returns = r; })
+    .catch(function (e) {
+      // ⚠ 반품은 양이 아주 적다(1년 7건). 여기서 막혀 **나머지를 통째로 버리면 안 된다.**
+      //   못 읽었으면 못 읽었다고 남기고 나머지는 그대로 저장한다.
+      if (!payload.returns) { payload.returns = []; payload.returnsError = String((e && e.message) || e); }
+    })
     .then(function () {
       say(
         '읽기 완료 · 상품 ' + payload.products.length + ' · 재고 ' + payload.stock.length +
           ' · 입출고 ' + payload.moves.length + ' · 입고 ' + payload.inbound.length +
-          ' · 송장 ' + payload.invoices.length
+          ' · 송장 ' + payload.invoices.length + ' · 반품 ' + payload.returns.length
       );
       window.__ezPayload = payload;
       if (window.__ezAuto) {
