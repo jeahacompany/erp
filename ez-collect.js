@@ -78,7 +78,14 @@
               var o = {};
               if (typeof h.forEach === 'function') h.forEach(function (v, k) { o[k] = v; });
               else Object.keys(h).forEach(function (k) { o[k] = h[k]; });
-              if (o['x-xsrf-token']) finish(o);
+              // ⚠ 2026-09-07: 예전에는 x-xsrf-token 이 있을 때만 받아들였다.
+              //   EZSTORAGE 가 인증을 바꿔(localStorage 토큰) 그 헤더를 더 이상 안 보낸다.
+              //   그래서 헤더를 **영원히 못 구했고**, EZ 수집이 매번 조용히 멈췄다.
+              //   → 앱이 실제로 쓰는 인증 헤더면 무엇이든 그대로 빌려 쓴다.
+              //     값은 읽지도 저장하지도 않는다. 그대로 넘길 뿐이다.
+              var AUTHISH = ['x-xsrf-token', 'authorization', 'x-access-token', 'x-auth-token'];
+              var hasAuth = AUTHISH.some(function (k) { return o[k]; });
+              if (hasAuth) finish(o);
             }
           }
         } catch (e) { /* 관찰만 한다. 앱 동작을 막지 않는다 */ }
