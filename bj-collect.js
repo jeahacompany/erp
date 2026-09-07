@@ -817,7 +817,11 @@
               // 하루를 다 읽었으면 표시해 둔다. PC가 꺼져도 여기서부터 이어받는다.
               return ask({ type: 'BJ_CKPT', rows: [{
                 source: 'orders', daytype: j[2], day: j[0], status: 'DONE',
-                rows: (res.stat && res.stat.rowsSeen) || 0 }] }, 'BJ_CKPT_OK', null, 30000);
+                rows: (res.stat && res.stat.rowsSeen) || 0,
+                // ⚠ **원본에서 본 주문 건수**를 같이 남긴다.
+                //   이게 있어야 "ERP 에 몇 건 빠졌나" 를 기계가 매일 확인할 수 있다.
+                //   2026-09-07 에 292건이 빠져 있었는데 아무도 몰랐다.
+                srcOrders: (res.stat && res.stat.orders) || 0 }] }, 'BJ_CKPT_OK', null, 30000);
             }
             // ⚠ 실패했는데 이유를 안 남기면 "실패 4" 만 뜨고 왜인지 아무도 모른다.
             //   던지지 않고 { ok:false } 로 돌아오는 실패도 똑같이 적어 둔다.
