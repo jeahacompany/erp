@@ -141,8 +141,7 @@
     }
     return nextDay();
   }).then(function () {
-    return enrich();
-  }).then(function () {
+    // enrich() 는 부르지 않는다 — 아래 설명
     send();
   }).catch(function (e) {
     done('읽지 못했습니다: ' + (e && e.message ? e.message : e), true);
@@ -152,6 +151,10 @@
   //   낸 주문이 있고(9/1~10 330건 · 114만 원), 네이버페이(선불금) 주문은 실결제가 0원이다.
   //   그래서 주문마다 카페24 「구매금액정보」(주문 목록의 금액 클릭 창과 같은 자료)를 읽어
   //   결제금액 + 네이버 충전금·포인트 = 실제로 받는 돈(paidReal)을 같이 보낸다. 읽기만 한다.
+  // ⛔ 2026-09-11 첫 실행에서 6건씩 동시에 9,344건을 부르자 카페24 가 이 창에 「쇼핑몰 접속 인증 안내」(보안문자)를 띄웠다.
+  //   보안문자는 사람이 풀어야 하고 우리가 우회하면 안 된다. → 지금은 **부르지 않는다** (send 전에 호출 안 함).
+  //   카드 주문의 네이버 포인트(9/1~10 약 1.3%)는 매출에서 빠진 채로 계산된다. 다시 쓰려면 하루 몇십 건 이하로, 천천히.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   function enrich() {
     var live = rows.filter(function (r) { return !(r.product === 0 && r.order === 0); });
     var i = 0, doneN = 0;
