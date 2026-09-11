@@ -52,6 +52,8 @@
   if (!win) { done('팝업이 막혔습니다. 주소창 오른쪽에서 팝업을 허용한 뒤 다시 눌러주세요.', true); return; }
 
   function num(s) { return Number(String(s || '').replace(/[^\d-]/g, '')) || 0; }
+  // 구매금액정보 금액은 '23900.00' 모양이다 — num() 은 점까지 지워서 100배가 된다
+  function money(s) { return Math.round(parseFloat(String(s == null ? '0' : s).replace(/,/g, '')) || 0); }
   function ymd(d) {
     var z = function (n) { return (n < 10 ? '0' : '') + n; };
     return d.getFullYear() + '-' + z(d.getMonth() + 1) + '-' + z(d.getDate());
@@ -139,10 +141,40 @@
     }
     return nextDay();
   }).then(function () {
+    return enrich();
+  }).then(function () {
     send();
   }).catch(function (e) {
     done('읽지 못했습니다: ' + (e && e.message ? e.message : e), true);
   });
+
+  // ⚠ 2026-09-11 — 목록의 「실결제」는 카드로 긁은 금액뿐이다. 카드 주문 중에도 일부를 **네이버페이 포인트**로
+  //   낸 주문이 있고(9/1~10 330건 · 114만 원), 네이버페이(선불금) 주문은 실결제가 0원이다.
+  //   그래서 주문마다 카페24 「구매금액정보」(주문 목록의 금액 클릭 창과 같은 자료)를 읽어
+  //   결제금액 + 네이버 충전금·포인트 = 실제로 받는 돈(paidReal)을 같이 보낸다. 읽기만 한다.
+  function enrich() {
+    var live = rows.filter(function (r) { return !(r.product === 0 && r.order === 0); });
+    var i = 0, doneN = 0;
+    function one() {
+      if (i >= live.length) return Promise.resolve();
+      var r = live[i++];
+      var body = 'order_id=' + encodeURIComponent(r.no) + '&getMode=payAmountInfoNCHECKOUT';
+      return fetch('/admin/php/shop1/s_new/order_get_json.php', {
+        method: 'POST', credentials: 'include', body: body,
+        headers: { 'content-type': 'application/x-www-form-urlencoded; charset=UTF-8', 'x-requested-with': 'XMLHttpRequest' },
+      }).then(function (res) { return res.json(); }).then(function (j) {
+        var f = {};
+        (function walk(o) { if (o && typeof o === 'object') Object.keys(o).forEach(function (k) { if (o[k] && typeof o[k] === 'object') walk(o[k]); else if (!(k in f)) f[k] = o[k]; }); })(j);
+        if ('payed_amount' in f || 'instant_mileage_used' in f) r.paidReal = money(f.payed_amount) + money(f.instant_mileage_used);
+      }).catch(function () { /* 못 읽은 주문은 옛 방식(목록 금액)으로 계산된다 */ }).then(function () {
+        doneN++;
+        if (doneN % 50 === 0) say('결제 상세 확인 중… ' + doneN + '/' + live.length);
+        return one();
+      });
+    }
+    var pool = []; for (var k = 0; k < 6; k++) pool.push(one());
+    return Promise.all(pool);
+  }
 
   function send() {
     say('ERP로 보내는 중… 주문 ' + rows.length + '건');
