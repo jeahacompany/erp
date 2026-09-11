@@ -106,6 +106,15 @@
   for (var i = DAYS - 1; i >= 0; i--) days.push(ymd(new Date(today.getFullYear(), today.getMonth(), today.getDate() - i)));
 
   var rows = [], dayStat = [];
+  // ⚠ 다 읽었는데 ERP 로그인이 만료돼 저장만 못 했으면(2026-09-11 첫 시험에서 겪음),
+  //   30분 안에 다시 누르면 카페24 를 또 읽지 않고 읽어 둔 것을 그대로 보낸다.
+  var pend = window.__c24Pending;
+  if (pend && pend.days === DAYS && Date.now() - pend.at < 30 * 60 * 1000) {
+    rows = pend.rows; dayStat = pend.dayStat;
+    say('아까 읽어 둔 주문 ' + rows.length + '건을 다시 보냅니다…');
+    send();
+    return;
+  }
   getForm().then(function (form) {
     var di = 0;
     function nextDay() {
@@ -137,6 +146,7 @@
 
   function send() {
     say('ERP로 보내는 중… 주문 ' + rows.length + '건');
+    window.__c24Pending = { rows: rows, dayStat: dayStat, days: DAYS, at: Date.now() };
     var parts = [];
     for (var s = 0; s < rows.length; s += CHUNK) parts.push(rows.slice(s, s + CHUNK));
     if (!parts.length) parts.push([]);
@@ -157,6 +167,7 @@
         saved += (e.data.result && e.data.result.rows) || 0;
         at++;
         if (at < parts.length) { say('ERP 저장 ' + at + '/' + parts.length); post(target); return; }
+        window.__c24Pending = null;
         stop('보냈습니다 · ' + days[0] + ' ~ ' + days[days.length - 1] + ' · 주문 ' + saved + '건');
       } else if (e.data.type === 'C24_ERROR') {
         stop('ERP 쪽에서 막혔습니다: ' + (e.data.message || '알 수 없는 오류'), true);
