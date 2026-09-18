@@ -25,8 +25,15 @@
   var DAYS = Math.max(1, Math.min(93, (window.__c24Days && Number(window.__c24Days)) || 10));
   var CHUNK = 2000;
 
-  if (!/\.cafe24\.com$/.test(location.hostname) || location.pathname.indexOf('/admin/') !== 0) {
-    alert('카페24 관리자 화면(fs6066.cafe24.com/admin)에서 눌러주세요.');
+  // 2026-09-18 — 카페24 관리자 주소가 /disp/admin/... 으로 바뀌었다.
+  //   예전 주소(/admin/php/main.php)는 새 주소로 넘겨버린다. 그래서 예전 경로만
+  //   인정하던 이 가드에 걸려 수집기가 시작도 못 했다.
+  //   게다가 alert 가 뜨면 화면이 멈춰 확장까지 붙잡는다 — 자동수집에서는 안 띄운다.
+  //   주문목록은 절대경로로 부르므로 관리자 화면 안이기만 하면 된다.
+  var inAdmin = location.hostname.indexOf('.cafe24.com') > 0
+    && location.pathname.indexOf('/admin/') >= 0;
+  if (!inAdmin) {
+    if (!window.__c24Bridge) alert('카페24 관리자 화면에서 눌러주세요.');
     return;
   }
   if (window.__c24CollectRunning) return;
