@@ -32,8 +32,40 @@
   if (window.__c24CollectRunning) return;
   window.__c24CollectRunning = true;
 
+  /* ── 확장이 부를 때는 창을 열지 않는다 (2026-09-18) ────────────────────
+   *
+   * 왜: 팝업은 **사람이 누른 직후**에만 열린다. 확장이 알아서 돌 때는 클릭이 없으니
+   *     window.open 이 막힌다 (9/12 에 실제로 그래서 자료가 안 넘어갔다).
+   * → 발주모아·EZ 와 같은 **우편함 방식**을 쓴다.
+   *   여기가 __c24MsgOut 에 넣어 두면 확장이 ERP 탭에 갖다 주고 __c24MsgIn 에 답을 놓는다.
+   *   확장은 여전히 ERP 토큰을 갖지 않는다 — 저장은 ERP 화면이 자기 권한으로 한다.
+   */
+  var BRIDGE = !!window.__c24Bridge;
+  var bridgeSeq = 0;
+  function bridgeSend(msg, waitMs) {
+    return new Promise(function (resolve) {
+      var id = ++bridgeSeq;
+      window.__c24MsgIn = null;
+      window.__c24MsgOut = { id: id, msg: msg };
+      var t0 = Date.now();
+      var timer = setInterval(function () {
+        var got = window.__c24MsgIn;
+        if (got && got.id === id) {
+          clearInterval(timer);
+          window.__c24MsgIn = null;
+          resolve(got.reply || {});
+          return;
+        }
+        if (Date.now() - t0 > (waitMs || 120000)) {
+          clearInterval(timer);
+          window.__c24MsgOut = null;
+          resolve({ type: 'C24_ERROR', message: 'ERP가 응답하지 않습니다' });
+        }
+      }, 300);
+    });
+  }
   // ⚠ 클릭 권한이 살아 있을 때 **먼저** 창을 연다. 다 읽고 나서 열면 팝업 차단에 걸린다 (EZ 수집기에서 겪음).
-  var win = window.open(ERP_URL, 'erp_c24_receiver');
+  var win = BRIDGE ? null : window.open(ERP_URL, 'erp_c24_receiver');
 
   var box = document.createElement('div');
   box.style.cssText =
@@ -49,7 +81,7 @@
     window.__c24CollectRunning = false;
     setTimeout(function () { box.remove(); }, bad ? 15000 : 8000);
   }
-  if (!win) { done('팝업이 막혔습니다. 주소창 오른쪽에서 팝업을 허용한 뒤 다시 눌러주세요.', true); return; }
+  if (!BRIDGE && !win) { done('팝업이 막혔습니다. 주소창 오른쪽에서 팝업을 허용한 뒤 다시 눌러주세요.', true); return; }
 
   function num(s) { return Number(String(s || '').replace(/[^\d-]/g, '')) || 0; }
   // 구매금액정보 금액은 '23900.00' 모양이다 — num() 은 점까지 지워서 100배가 된다
@@ -185,6 +217,33 @@
     var parts = [];
     for (var s = 0; s < rows.length; s += CHUNK) parts.push(rows.slice(s, s + CHUNK));
     if (!parts.length) parts.push([]);
+
+    // 확장이 부른 경우 — 우편함으로 한 조각씩 보낸다 (창을 열지 않는다)
+    if (BRIDGE) {
+      var saved2 = 0;
+      (function step(i) {
+        if (i >= parts.length) {
+          window.__c24Pending = null;
+          window.__c24Result = { state: 'ok', saved: saved2, from: days[0], to: days[days.length - 1] };
+          done('보냈습니다 · ' + days[0] + ' ~ ' + days[days.length - 1] + ' · 주문 ' + saved2 + '건');
+          return;
+        }
+        var last = i === parts.length - 1;
+        bridgeSend({ type: 'C24_ORDERS', rows: parts[i], days: last ? dayStat : [], last: last })
+          .then(function (d) {
+            if (d.type === 'C24_SAVED') {
+              saved2 += (d.result && d.result.rows) || 0;
+              say('ERP 저장 ' + (i + 1) + '/' + parts.length);
+              step(i + 1);
+            } else {
+              window.__c24Result = { state: 'error', msg: d.message || 'ERP 저장 실패' };
+              done('ERP 쪽에서 막혔습니다: ' + (d.message || '알 수 없는 오류'), true);
+            }
+          });
+      })(0);
+      return;
+    }
+
     var at = 0, saved = 0, started = false, timer = null;
     function arm() { clearTimeout(timer); timer = setTimeout(function () { stop('ERP가 응답하지 않습니다. ERP에 로그인돼 있는지 확인해주세요.', true); }, 120000); }
     function stop(t, bad) { clearTimeout(timer); window.removeEventListener('message', onMsg); done(t, bad); }
