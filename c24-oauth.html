@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>카페24 연결</title>
+<style>
+  body { font-family: system-ui, -apple-system, "Malgun Gothic", sans-serif; background: #f6f7f9; color: #1d2330;
+         display: grid; place-items: center; min-height: 100vh; margin: 0; padding: 16px; box-sizing: border-box; }
+  .box { background: #fff; border: 1px solid #e3e6eb; border-radius: 12px; padding: 28px 24px; max-width: 420px; width: 100%; }
+  h1 { font-size: 18px; margin: 0 0 10px; }
+  p { font-size: 14px; line-height: 1.6; margin: 6px 0; color: #4a5263; }
+  .bad { color: #b42318; }
+</style>
+</head>
+<body>
+<div class="box">
+  <h1 id="t">카페24 연결 중…</h1>
+  <p id="m">이 컴퓨터의 수집 프로그램에 연결 정보를 넘기고 있습니다.</p>
+</div>
+<script>
+/* 카페24 공식 API 연결의 돌아오는 자리 (2026-09-21).
+ *
+ * 카페24 는 인가코드를 https 주소로만 돌려준다. 그래서 여기(GitHub Pages)로 받고,
+ * **곧바로 이 컴퓨터의 수집 프로그램(127.0.0.1)** 으로 넘긴다.
+ * 코드를 열쇠로 바꾸는 일(비밀키가 필요한 일)은 그 프로그램만 한다. 이 화면은 비밀을 모른다.
+ *
+ * ⚠ 코드를 어디에도 저장하거나 보내지 않는다 (이 컴퓨터로 넘기는 것 말고는).
+ *   코드는 1분이면 죽고, 비밀키 없이는 쓸모가 없다.
+ */
+(function () {
+  var q = new URLSearchParams(location.search);
+  var code = q.get('code'), state = q.get('state'), err = q.get('error');
+  var t = document.getElementById('t'), m = document.getElementById('m');
+  if (err) {
+    t.textContent = '연결하지 않았습니다';
+    m.className = 'bad';
+    m.textContent = '카페24 가 거절했습니다: ' + (q.get('error_description') || err);
+    return;
+  }
+  if (!code || !state) {
+    t.textContent = '연결 정보가 없습니다';
+    m.textContent = '카페24 연결 단추를 눌러서 이 화면에 와야 합니다.';
+    return;
+  }
+  // 주소창·방문기록에 코드가 남지 않게 지우고 넘긴다
+  try { history.replaceState(null, '', location.pathname); } catch (e) { /* 넘어간다 */ }
+  location.replace('http://127.0.0.1:47824/cb?code=' + encodeURIComponent(code) + '&state=' + encodeURIComponent(state));
+  setTimeout(function () {
+    t.textContent = '이 컴퓨터의 수집 프로그램이 응답하지 않습니다';
+    m.className = 'bad';
+    m.textContent = '연결 프로그램(npm run c24:connect)이 켜져 있어야 합니다. 켠 뒤 다시 시도해 주세요.';
+  }, 8000);
+})();
+</script>
+</body>
+</html>
