@@ -24,7 +24,14 @@
     return;
   }
 
-  // 1. 로그인부터 본다. 같은 출처라 바로 읽을 수 있다.
+  // 1. 저장할 자격이 있는지 본다. 같은 출처라 바로 읽을 수 있다.
+  //
+  // ⚠⚠ 2026-09-29 — **여기서 매시간 조용히 막히고 있었다.**
+  //   받는 화면(?receive=1)은 **저장 전용 토큰(erp_collector)을 먼저** 쓰는데,
+  //   중계기인 여기서는 사람 로그인(erp_session)만 보고 그 전에 돌려보냈다.
+  //   그래서 저장 권한이 멀쩡히 있어도 "ERP 로그인이 필요합니다" 만 남기고 끝났고,
+  //   화면에는 「이지스토리지 로그인 필요」 로 떠서 엉뚱한 곳을 봤다 (9/28 07:12 이후 38시간 정지).
+  //   → 둘 중 하나만 있으면 건넨다. 판단은 받는 화면이 한다.
   var hasSession = false;
   try {
     var raw = localStorage.getItem('erp_session') || localStorage.getItem('doban_session');
@@ -36,7 +43,16 @@
     /* 읽기 실패하면 로그인 없음으로 본다 */
   }
   if (!hasSession) {
-    set('EZ_ERROR', { message: 'ERP 로그인이 필요합니다 (브라우저에서 ERP에 로그인해 주세요)' });
+    try {
+      hasSession = !!(localStorage.getItem('erp_collector') || localStorage.getItem('doban_collector'));
+    } catch {
+      /* 마찬가지 */
+    }
+  }
+  if (!hasSession) {
+    set('EZ_ERROR', {
+      message: 'ERP 저장 권한이 없습니다 — 수집용 크롬에서 ERP 로그인 후 「다시 허용하기」 (이지스토리지 문제가 아닙니다)',
+    });
     return;
   }
 
