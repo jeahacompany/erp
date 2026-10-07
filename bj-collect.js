@@ -491,6 +491,24 @@
         o.raw.amounts.payRule = 'SUM_OF_LINES';
         o.raw.amounts.payLines = pays;
         o.payAmount = pays.reduce(function (a, b) { return a + b; }, 0);
+
+        /* ⚠⚠ 2026-10-07 — **매출이 0원으로 들어오는 판매처가 있다.**
+         *
+         *   그립·테무 같은 곳은 발주모아 「결제금액」 칸이 통째로 비어 있다(줄마다 0).
+         *   그런데 **「판매가(seller)」 칸은 멀쩡히 들어온다.**
+         *   그동안 우리는 결제금액만 보고 매출 0 으로 저장했고,
+         *   원가·배송비는 그대로 잡혀서 **그립이 30일에 -702만 적자로 보였다.**
+         *   (실제로는 소비자가 1,109만어치를 판 달이었다)
+         *
+         *   → 결제금액이 한 푼도 없고 판매가가 있으면 **판매가를 매출로 본다.**
+         *     추측이 아니다: 결제금액이 정상으로 들어오는 주문 2,998건을 대조해 보니
+         *     카카오·스마트스토어·자사몰·지마켓·쿠팡은 결제금액 = 판매가 가 **100% 일치**했다.
+         *   ⚠ 티딜은 예외다(판매가의 79%만 정산). 그래서 무엇을 근거로 썼는지 payBasis 에 남긴다 —
+         *     판매처별 정산율은 ERP 쪽에서 따로 본다. 여기서는 "판매가를 썼다" 는 사실만 적는다. */
+        if (!o.payAmount && o.raw.amounts.seller > 0) {
+          o.payAmount = o.raw.amounts.seller;
+          o.raw.amounts.payBasis = 'SELLER';
+        }
         // 배송비는 고객이 낸 것만 (배송비 칸의 "결제"가 0보다 큰 줄)
         o.shipFee = fees.reduce(function (a, b) { return a + b; }, 0);
         delete o.raw.amounts.pay; delete o.raw.shipFees.pay; delete o.__paySeen;
