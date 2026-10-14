@@ -44,14 +44,41 @@
     m.textContent = '카페24 연결 단추를 눌러서 이 화면에 와야 합니다.';
     return;
   }
-  // 주소창·방문기록에 코드가 남지 않게 지우고 넘긴다
+  // 주소창·방문기록에 코드가 남지 않게 지운다 (화면 안에서만 들고 있는다)
   try { history.replaceState(null, '', location.pathname); } catch (e) { /* 넘어간다 */ }
-  location.replace('http://127.0.0.1:47824/cb?code=' + encodeURIComponent(code) + '&state=' + encodeURIComponent(state));
-  setTimeout(function () {
-    t.textContent = '이 컴퓨터의 수집 프로그램이 응답하지 않습니다';
-    m.className = 'bad';
-    m.textContent = '연결 프로그램(npm run c24:connect)이 켜져 있어야 합니다. 켠 뒤 다시 시도해 주세요.';
-  }, 8000);
+
+  /* 이 컴퓨터의 수집 프로그램에 넘긴다.
+   * ⚠ 예전에는 location.replace 로 **이동**했다. 그러면 실패했을 때 이 화면이 사라져
+   *   코드를 다시 쓸 길이 없었다. 컴퓨터를 두 대 쓰면(대표 PC·맥북) 반드시 겪는다.
+   *   → 이동하지 않고 조용히 보내고, 실패하면 **이 화면에서 손으로 넘기는 길**을 연다. */
+  fetch('http://127.0.0.1:47824/cb?code=' + encodeURIComponent(code) + '&state=' + encodeURIComponent(state),
+        { mode: 'no-cors', cache: 'no-store' })
+    .then(function () {
+      t.textContent = '카페24에 동의했습니다';
+      m.textContent = '연결 프로그램으로 넘겼습니다. 그 화면에 「연결했습니다」가 뜨면 끝입니다. 이 창은 닫으셔도 됩니다.';
+    })
+    .catch(function () { manual(); });
+  setTimeout(function () { if (t.textContent === '카페24 연결 중…') manual(); }, 6000);
+
+  /* 손으로 넘기는 길 — 다른 컴퓨터에서 동의했을 때 */
+  function manual() {
+    t.textContent = '이 컴퓨터에서는 바로 넘기지 못합니다';
+    m.innerHTML = '다른 컴퓨터(수집 프로그램이 도는 곳)에서 아래 한 줄을 그대로 실행하면 연결됩니다.<br>'
+      + '<b>1분 안에</b> 하셔야 합니다 — 이 값은 1분이면 죽습니다.';
+    var cmd = 'npm run c24:connect -- --code ' + code;
+    var box = document.createElement('div');
+    box.style.cssText = 'margin-top:12px;padding:10px;background:#f2f4f7;border-radius:8px;'
+      + 'font-family:ui-monospace,Consolas,monospace;font-size:12px;word-break:break-all;user-select:all';
+    box.textContent = cmd;
+    var btn = document.createElement('button');
+    btn.textContent = '복사';
+    btn.style.cssText = 'margin-top:10px;padding:8px 14px;border:0;border-radius:8px;'
+      + 'background:#f97316;color:#fff;font-size:13px;cursor:pointer';
+    btn.onclick = function () {
+      navigator.clipboard.writeText(cmd).then(function () { btn.textContent = '복사했습니다'; });
+    };
+    document.querySelector('.box').append(box, btn);
+  }
 })();
 </script>
 </body>
