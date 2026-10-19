@@ -1,0 +1,1 @@
+(globalThis.TURBOPACK||(globalThis.TURBOPACK=[])).push(["object"==typeof document?document.currentScript:void 0,88533,t=>{"use strict";var e=t.i(43476),c=t.i(91320);t.s(["default",0,function(){return(0,e.jsx)(c.default,{scope:"all",title:"상담",desc:"카카오톡·네이버·자사몰로 들어온 문의를 한 곳에서 봅니다."})}])}]);
