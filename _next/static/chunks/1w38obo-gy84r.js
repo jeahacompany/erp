@@ -1,0 +1,1 @@
+(globalThis.TURBOPACK||(globalThis.TURBOPACK=[])).push(["object"==typeof document?document.currentScript:void 0,80263,t=>{"use strict";var e=t.i(43476),s=t.i(91320);t.s(["default",0,function(){return(0,e.jsx)(s.default,{scope:"sms",title:"문자 상담",desc:"업무폰으로 들어온 문자입니다. 답장도 업무폰으로 바로 나갑니다."})}])}]);

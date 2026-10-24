@@ -1,0 +1,1 @@
+(globalThis.TURBOPACK||(globalThis.TURBOPACK=[])).push(["object"==typeof document?document.currentScript:void 0,63147,t=>{"use strict";var e=t.i(43476),c=t.i(91320);t.s(["default",0,function(){return(0,e.jsx)(c.default,{scope:"claims",title:"클레임",desc:"품질·환불·교환처럼 사람이 반드시 확인해야 하는 문의입니다."})}])}]);

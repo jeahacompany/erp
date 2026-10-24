@@ -1,0 +1,1 @@
+(globalThis.TURBOPACK||(globalThis.TURBOPACK=[])).push(["object"==typeof document?document.currentScript:void 0,34985,t=>{"use strict";var e=t.i(43476),o=t.i(91320);t.s(["default",0,function(){return(0,e.jsx)(o.default,{scope:"open",title:"미처리 상담",desc:"아직 답하지 않은 문의입니다. 오래된 것부터 처리하세요."})}])}]);
