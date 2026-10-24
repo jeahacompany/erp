@@ -1,2 +1,2 @@
-:HL["/erp/_next/static/chunks/1s02worzaguca.css","style"]
-0:{"tree":{"name":"","param":null,"prefetchHints":4176,"slots":{"children":{"name":"(erp)","param":null,"prefetchHints":4192,"slots":{"children":{"name":"stock","param":null,"prefetchHints":4192,"slots":{"children":{"name":"reorder2","param":null,"prefetchHints":4192,"slots":{"children":{"name":"__PAGE__","param":null,"prefetchHints":4256,"slots":null}}}}}}}}},"staleTime":300,"buildId":"tR1KN5tHioBFbKWgGu_IC"}
+:HL["/erp/_next/static/chunks/443lybf7ohh15.css","style"]
+0:{"tree":{"name":"","param":null,"prefetchHints":4176,"slots":{"children":{"name":"(erp)","param":null,"prefetchHints":4192,"slots":{"children":{"name":"stock","param":null,"prefetchHints":4192,"slots":{"children":{"name":"reorder2","param":null,"prefetchHints":4192,"slots":{"children":{"name":"__PAGE__","param":null,"prefetchHints":4256,"slots":null}}}}}}}}},"staleTime":300,"buildId":"zdo6B2JahWLCTtrg7zXTl"}

@@ -1,0 +1,1 @@
+(globalThis.TURBOPACK||(globalThis.TURBOPACK=[])).push(["object"==typeof document?document.currentScript:void 0,59937,t=>{"use strict";var e=t.i(43476),i=t.i(91320);t.s(["default",0,function(){return(0,e.jsx)(i.default,{desk:!0,title:"상담 창구",desc:"모든 창구의 상담을 최신순으로. 위 칸에서 상태·창구를 골라 거릅니다."})}])}]);
