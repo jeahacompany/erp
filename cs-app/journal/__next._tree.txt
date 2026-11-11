@@ -1,2 +1,2 @@
 :HL["/erp/_next/static/chunks/05fdo30plmg3-.css","style"]
-0:{"tree":{"name":"","param":null,"prefetchHints":4176,"slots":{"children":{"name":"cs-app","param":null,"prefetchHints":4192,"slots":{"children":{"name":"journal","param":null,"prefetchHints":4192,"slots":{"children":{"name":"__PAGE__","param":null,"prefetchHints":4256,"slots":null}}}}}}},"staleTime":300,"buildId":"-UcLCbVaXIhAiOK6S545t"}
+0:{"tree":{"name":"","param":null,"prefetchHints":4176,"slots":{"children":{"name":"cs-app","param":null,"prefetchHints":4192,"slots":{"children":{"name":"journal","param":null,"prefetchHints":4192,"slots":{"children":{"name":"__PAGE__","param":null,"prefetchHints":4256,"slots":null}}}}}}},"staleTime":300,"buildId":"D5W8O6yERPlR9fU8AEJx4"}
