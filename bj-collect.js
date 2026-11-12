@@ -159,6 +159,9 @@
     'border:1px solid #cbd5e1;border-radius:10px;padding:14px 16px;box-shadow:0 8px 24px rgba(0,0,0,.18);' +
     'font:13px/1.6 -apple-system,BlinkMacSystemFont,"Malgun Gothic",sans-serif;color:#0f172a';
   box.innerHTML = '<div style="font-weight:700;margin-bottom:6px">발주모아 → ERP</div><div id="bj-msg">준비 중…</div>';
+  // 대표 PC 화면 수집 보조(scripts/bj-crawl.mjs)는 숨은 크롬에서 돌아 아무도 안 본다 — 알림 상자를 숨긴다 (11/12)
+  // 직원 확장은 __bjQuiet 를 안 넣으므로 알림이 그대로 보인다.
+  if (window.__bjQuiet) box.style.display = 'none';
   document.body.appendChild(box);
   var msgEl = box.querySelector('#bj-msg');
   function say(t) { msgEl.innerHTML = t; }
