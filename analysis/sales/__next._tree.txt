@@ -1,2 +1,2 @@
-:HL["/erp/_next/static/chunks/092j8dt06o9m0.css","style"]
-0:{"tree":{"name":"","param":null,"prefetchHints":4176,"slots":{"children":{"name":"(erp)","param":null,"prefetchHints":4192,"slots":{"children":{"name":"analysis","param":null,"prefetchHints":4192,"slots":{"children":{"name":"sales","param":null,"prefetchHints":4192,"slots":{"children":{"name":"__PAGE__","param":null,"prefetchHints":4256,"slots":null}}}}}}}}},"staleTime":300,"buildId":"oTrIKQgvNRNukvWytA77G"}
+:HL["/erp/_next/static/chunks/25x0cw5th11v1.css","style"]
+0:{"tree":{"name":"","param":null,"prefetchHints":4176,"slots":{"children":{"name":"(erp)","param":null,"prefetchHints":4192,"slots":{"children":{"name":"analysis","param":null,"prefetchHints":4192,"slots":{"children":{"name":"sales","param":null,"prefetchHints":4192,"slots":{"children":{"name":"__PAGE__","param":null,"prefetchHints":4256,"slots":null}}}}}}}}},"staleTime":300,"buildId":"2xWUBGOsbBwpj0eNB2KKm"}
